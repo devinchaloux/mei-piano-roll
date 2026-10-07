@@ -4,9 +4,10 @@ Instructions for Claude Code in this repository. They apply to anyone working
 on mei-piano-roll with Claude; the maintainer's own session instructions load
 from a private file through the import at the end.
 
-**Current state (2026-10-07):** the repo holds a README, a LICENSE and the
-docs in `docs/`. There is no code, no stack and no `package.json` yet. Decide
-before building: `docs/decisions.md` lists what is open.
+**Current state (2026-10-07):** the native reader and the player work, with
+unit tests, a demo page (`npm run dev`) and a stress test over the MEI
+project's sample files (`npm run stress`). The second reader is not built.
+`docs/decisions.md` lists what is decided and what is open.
 
 ---
 
@@ -38,12 +39,17 @@ code.
 
 ## Architecture in brief
 
-Not built yet. The planned shape, until a decision says otherwise:
-
-- A browser app in TypeScript. The stack is open (`docs/decisions.md`).
-- MEI parsing and note extraction live in their own module, with no UI, and
-  are unit-tested.
-- Components only draw and play what the parser returns.
+- React + Vite + TypeScript, built as a library (`src/index.ts`). React comes
+  from the embedding page, never from the bundle. Vitest for tests, ESLint for
+  lint.
+- **`src/mei/`** reads MEI into `MeiScore` (`src/mei/types.ts`): notes in
+  quarter-note beats, plus **warnings** for anything the reader drops,
+  simplifies or guesses. Every reader returns this one shape. No UI here, and it
+  is unit-tested in `src/test/`.
+- **`src/roll/MeiPianoRoll.tsx`** only draws (one canvas) and plays (Web Audio)
+  what a reader returns, and lists the warnings under the roll.
+- A new gap the reader knows about gets a warning, not a silent skip: the
+  stress test counts them across the sample files.
 
 ---
 
@@ -68,13 +74,19 @@ clones.
 
 ### Checks
 
-None exist yet. When the stack is chosen, add these scripts to `package.json`,
-add a CI workflow that runs them on every push and pull request, and replace
-this paragraph with the real commands:
+CI (`.github/workflows/ci.yml`) runs lint, a guard against `TEMPORARY`
+markers, the tests and the build (`tsc`, then `vite build`) on every push and
+pull request. Run the same before pushing:
 
 ```bash
 npm run lint && npm run test:run && npm run build
 ```
+
+A comment marked `TEMPORARY` is a merge blocker; CI fails on one.
+
+`npm run stress` is not part of CI: it downloads about 113 MB and its job is
+to show what breaks. Run it after any change to a reader and compare its
+totals with the last run.
 
 ### Commit messages
 
@@ -89,7 +101,7 @@ history.
 
 - **Match existing patterns**; don't introduce new ones without asking.
 - **Legibility over cleverness.**
-- **No `any`** (once TypeScript is in): use `unknown` and narrow.
+- **No `any`**: use `unknown` and narrow.
 - **Comments explain why, not what.** Good: `// MEI durations are fractions of
   a whole note; convert to beats before scheduling`. Bad: `// get duration`.
 - **Section dividers** in longer files: `// ── Section name ──`.

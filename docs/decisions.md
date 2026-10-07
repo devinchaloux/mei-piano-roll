@@ -1,8 +1,8 @@
 # Decisions
 
-**Status (2026-10-07):** three decisions made; two questions open. **Next action:**
-set up the project (TypeScript, Vite, Vitest, ESLint, CI), then bring in the
-first reader.
+**Status (2026-10-07):** the project is set up and the native reader works.
+**Next action:** build the second reader (Verovio), which needs its dependency
+approved first, then compare the two readers on the sample files.
 
 Each decision gets: date, the choice, the alternatives rejected, and why, so it
 isn't re-litigated later. Entries are binding until a later entry reverses
@@ -53,6 +53,43 @@ project's repository is already the maintained source.
 
 **Why.** The point is to run the roll over every file as it is built and see
 what breaks; the result table is what is worth keeping, not the files.
+
+### 2026-10-07: the tools, matching the maintainer's other projects
+
+**Choice.** React (a peer dependency, version 18 or later), Vite, TypeScript 5.9,
+Vitest, ESLint with the TypeScript and React Hooks rules, and jsdom for tests
+that need a browser's XML parser. CI on GitHub Actions runs lint, tests and the
+build.
+
+**Rejected.** TypeScript 7: newer, but the lint tooling is proven on 5.
+
+**Why.** The same tools as the maintainer's other public project, so one set of
+habits covers both. React is a peer dependency because the page embedding the
+roll already has it; two copies of React on one page break hooks.
+
+### 2026-10-07: the reader reports what it leaves out
+
+**Choice.** Every reader returns `warnings` alongside the notes: one entry per
+kind of gap (ties drawn as separate notes, pickup bars padded, a meter written
+where the reader doesn't look, skipped elements…) with a count. The player lists
+them under the roll. An unreadable duration now takes no time instead of
+breaking the whole timeline.
+
+**Rejected.** Failing silently, as the prototype did: a user can't tell a
+limitation from a bug.
+
+**Why.** It is the "say what the roll leaves out" design bet, made concrete, and
+it lets the stress test count each gap across the sample files.
+
+### 2026-10-07: the stress test gives each file its own simulated browser
+
+**Choice.** The stress test reads files in plain Node, creating a fresh jsdom
+window per file and closing it afterwards.
+
+**Rejected.** One shared jsdom window: it keeps every document it has parsed
+and ran out of memory (8 GB) partway through the samples.
+
+**Why.** Memory stays flat (about 55 MB) whatever the number of files.
 
 ## Open questions
 
