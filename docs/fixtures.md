@@ -1,9 +1,13 @@
-# Fixtures
+# Test files
 
-Sample MEI files used for tests and demos. **A file goes in only with its
-source and licence recorded here**; scores and encodings are copyrighted
-separately.
+**No MEI files are committed to this repository** (decided 2026-10-07; see
+`docs/decisions.md`).
 
-| File | What it covers | Source (URL) | Licence | Added |
-|---|---|---|---|---|
-| _none yet_ | | | | |
+- **Stress test:** a script downloads the MEI project's sample encodings
+  (`music-encoding/sample-encodings`, Educational Community License 2.0),
+  pinned to one commit, into a folder git ignores. Not built yet.
+- **Unit tests:** short MEI snippets written for the tests, in this
+  repository's licence.
+
+If a file from anywhere else is ever needed, record it here first: file, what
+it covers, source URL, licence, date added.

@@ -1,6 +1,6 @@
 # Decisions
 
-**Status (2026-10-07):** two decisions made; three questions open. **Next action:**
+**Status (2026-10-07):** three decisions made; two questions open. **Next action:**
 set up the project (TypeScript, Vite, Vitest, ESLint, CI), then bring in the
 first reader.
 
@@ -39,10 +39,24 @@ MEI file, published for anyone to install (npm) once the repository is public.
 
 **Why.** Other pages need to embed the roll, and a demo makes it easy to try.
 
+### 2026-10-07: test files are fetched, never committed
+
+**Choice.** The stress test reads the MEI project's sample encodings
+(`music-encoding/sample-encodings`, ECL-2.0), MEI 3.0 to 5.1. A script
+downloads them, pinned to one commit, into a folder git ignores, and runs
+every file. Files whose headers carry a modern publisher's copyright are left
+out. Unit tests use short MEI snippets written for the tests.
+
+**Rejected.** Committing a sample (about 21 MB for the small files) or the
+whole set (about 113 MB): it stays in the history for good, and the MEI
+project's repository is already the maintained source.
+
+**Why.** The point is to run the roll over every file as it is built and see
+what breaks; the result table is what is worth keeping, not the files.
+
 ## Open questions
 
 | Question | Options |
 |---|---|
 | How is the roll drawn, and how does it make sound? | Settled by the existing prototype for now (canvas; the browser's own audio); revisit only if the move shows a reason |
-| Which MEI files test it? | Public-domain files with a recorded source and licence (`docs/fixtures.md`) |
 | Which MEI elements does the roll handle first? | Notes, rests, ties and several staves first; list the rest as known gaps |

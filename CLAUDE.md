@@ -59,9 +59,9 @@ clones.
 2. **Ask before adding a dependency.** A dependency is a decision. Record it
    in `docs/decisions.md` with its reason.
 3. **If you didn't create a file and its origin and licence aren't clear, don't
-   commit it.** This covers MEI files above all: scores and encodings carry
-   their own copyright. A fixture needs its source and licence in
-   `docs/fixtures.md`.
+   commit it.** This covers MEI files above all: scores and encodings carry their own
+   copyright. No MEI files are committed; the stress test fetches them
+   (`docs/fixtures.md`).
 4. **No secrets, tokens or personal email addresses** in any commit.
 5. **Ask before anything destructive:** deleting files, `git reset`, anything
    that touches an outside service.
@@ -103,7 +103,7 @@ Docs land in the same commit as the change that invalidates them:
 
 - every design decision gets an entry in `docs/decisions.md` with its reason;
 - a behaviour change updates the README's "Status" section;
-- a new fixture updates `docs/fixtures.md`.
+- a new source of test files updates `docs/fixtures.md`.
 
 Before committing, grep for what the change invalidates:
 

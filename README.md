@@ -11,4 +11,4 @@
 
 - [`CLAUDE.md`](CLAUDE.md): rules for working on this repo with Claude Code
 - [`docs/decisions.md`](docs/decisions.md): design decisions and open questions
-- [`docs/fixtures.md`](docs/fixtures.md): test files, with source and licence
+- [`docs/fixtures.md`](docs/fixtures.md): where the test files come from
