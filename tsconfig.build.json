@@ -1,0 +1,16 @@
+{
+  // Emits only the type declarations for the published package. The type
+  // check itself is the plain `tsc` at the start of `npm run build`.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "declaration": true,
+    "emitDeclarationOnly": true,
+    "allowImportingTsExtensions": false,
+    "outDir": "dist/types",
+    "rootDir": "src",
+    "types": []
+  },
+  "include": ["src"],
+  "exclude": ["src/test"]
+}
