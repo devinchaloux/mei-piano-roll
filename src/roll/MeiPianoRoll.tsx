@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { parseNative, midiName, isBlackKey } from "../mei/parseNative";
 import type { MeiNote, MeiScore, MeiWarning } from "../mei/types";
+import { SoundEngine, type SoundStatus } from "../audio/engine";
+import { SOUNDS, DEFAULT_SOUND, SAMPLE_CREDIT, findSound } from "../audio/sounds";
+import { resolveTheme, shade, type RollTheme, type ThemeName } from "./themes";
+import { rollToSvg } from "../render/svg";
+import { svgToPng, downloadBlob } from "../render/toPng";
 
 /* ===========================================================================
  * MeiPianoRoll — an embeddable MEI piano-roll player.
@@ -8,7 +13,8 @@ import type { MeiNote, MeiScore, MeiWarning } from "../mei/types";
  * Reads MEI with the native reader (src/mei/parseNative.ts), draws a DAW-style
  * piano roll on a single fixed canvas (camera/offset based, so scrolling +
  * playback-follow are smooth — no giant scroll-canvas, no scrollLeft jumps),
- * and plays it back with a Web Audio square-lead synth (matching GM program 81).
+ * and plays it with a choice of sounds: built-in synths, or sampled instruments
+ * downloaded when chosen (src/audio/). Colours come from a theme (./themes.ts).
  *
  * Usage:
  *   <MeiPianoRoll meiText={xmlString} />
@@ -26,8 +32,16 @@ export interface MeiPianoRollProps {
   pxPerBeat?: number;
   /** Override the tempo from the file. */
   bpm?: number;
-  /** Accent colour for notes. Default "#4f8cff". */
+  /**
+   * Note colour. Without it, the page's `--accent` CSS variable is used (and
+   * followed live, so a site's accent switch recolours the notes), then the
+   * theme's own note colour.
+   */
   accent?: string;
+  /** Colour theme for the roll: a preset name or your own colours. Default "studio". */
+  theme?: ThemeName | RollTheme;
+  /** Starting sound, by id (see SOUNDS). Default the square lead. */
+  sound?: string;
   className?: string;
   /** Called with the parsed score (notes and warnings) each time a file loads. */
   onLoad?: (score: MeiScore) => void;
@@ -37,7 +51,6 @@ export interface MeiPianoRollProps {
 // Small helpers
 // ---------------------------------------------------------------------------
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
-const midiToFreq = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
 
 function pitchRange(notes: MeiNote[]): { lo: number; hi: number } {
   if (!notes.length) return { lo: 60, hi: 72 };
@@ -62,32 +75,23 @@ function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number,
 // Layout constants
 const KEY_W = 46;
 const RULER_H = 22;
-const COL = {
-  bg: "#0c0e14",
-  rowWhite: "#161b27",
-  rowBlack: "#11151f",
-  gridBeat: "#222a3b",
-  gridMeasure: "#3a455f",
-  gutter: "#1b2030",
-  text: "#8b95ad",
-  playhead: "#ffce4a",
-};
 
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
 export default function MeiPianoRoll(props: MeiPianoRollProps) {
-  const { src, meiText, height = 280, accent = "#4f8cff" } = props;
+  const { src, meiText, height = 280 } = props;
+  const theme = resolveTheme(props.theme);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const scoreRef = useRef<MeiScore | null>(null);
   const bpmRef = useRef<number>(props.bpm ?? 120);
   const pxRef = useRef<number>(props.pxPerBeat ?? 64);
   const loopRef = useRef<boolean>(false);
-  const accentRef = useRef<string>(accent);
-
-  const audioRef = useRef<{ ctx: AudioContext; master: GainNode; filter: BiquadFilterNode } | null>(null);
-  const sourcesRef = useRef<OscillatorNode[]>([]);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const themeRef = useRef<RollTheme>(theme);
+  const noteColorRef = useRef<string>(props.accent ?? theme.note);
+  const engineRef = useRef<SoundEngine | null>(null);
   const drawRef = useRef<() => void>(() => {});
   const loopFnRef = useRef<() => void>(() => {});
 
@@ -102,6 +106,13 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   const [zoom, setZoom] = useState<number>(props.pxPerBeat ?? 64);
   const [loop, setLoop] = useState(false);
   const [warnings, setWarnings] = useState<MeiWarning[]>([]);
+  const [soundId, setSoundId] = useState<string>(findSound(props.sound ?? DEFAULT_SOUND).id);
+  const [soundStatus, setSoundStatus] = useState<SoundStatus>("ready");
+  // Refs as well as state: the keyboard shortcuts are wired up once, on mount,
+  // and must still see the sound chosen since.
+  const soundIdRef = useRef(soundId);
+  const soundReadyRef = useRef(false);
+  const [pageAccent, setPageAccent] = useState<string | null>(null);
   // A ref, so a new onLoad function from the parent doesn't re-read the file.
   const onLoadRef = useRef(props.onLoad);
   useEffect(() => { onLoadRef.current = props.onLoad; }, [props.onLoad]);
@@ -110,74 +121,88 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   useEffect(() => { bpmRef.current = bpm; }, [bpm]);
   useEffect(() => { pxRef.current = zoom; drawRef.current(); }, [zoom]);
   useEffect(() => { loopRef.current = loop; }, [loop]);
-  // Redraw on accent change too — the site wrapper (AnthemRoll) re-passes the
-  // accent when the visitor switches it, and notes are painted with it.
-  useEffect(() => { accentRef.current = accent; drawRef.current(); }, [accent]);
+
+  // ---- Colours ------------------------------------------------------------
+  // Follow the page's --accent live: a site's theme or accent switch changes
+  // attributes on <html>, so watching those is enough (no polling).
+  useEffect(() => {
+    if (props.accent) return;
+    const read = () => {
+      const el = rootRef.current;
+      const v = el ? getComputedStyle(el).getPropertyValue("--accent").trim() : "";
+      setPageAccent(v || null);
+    };
+    read();
+    const mo = new MutationObserver(read);
+    mo.observe(document.documentElement, { attributes: true });
+    return () => mo.disconnect();
+  }, [props.accent]);
+  const noteColor = props.accent ?? pageAccent ?? theme.note;
+  useEffect(() => {
+    themeRef.current = theme;
+    noteColorRef.current = noteColor;
+    drawRef.current();
+  }, [theme, noteColor]);
 
   const secPerBeat = () => 60 / bpmRef.current;
 
   // ---- Audio -------------------------------------------------------------
-  function ensureAudio() {
-    if (audioRef.current) return audioRef.current;
-    const AC: typeof AudioContext =
-      window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    const ctx = new AC();
-    const filter = ctx.createBiquadFilter();
-    filter.type = "lowpass";
-    filter.frequency.value = 3200;
-    filter.Q.value = 0.6;
-    const master = ctx.createGain();
-    master.gain.value = 0.22;
-    filter.connect(master);
-    master.connect(ctx.destination);
-    audioRef.current = { ctx, master, filter };
-    return audioRef.current;
+  // The engine is made on first use: browsers only allow sound after a click.
+  function ensureEngine(): SoundEngine {
+    if (!engineRef.current) engineRef.current = new SoundEngine(soundIdRef.current);
+    return engineRef.current;
   }
   function stopAllVoices() {
-    for (const s of sourcesRef.current) { try { s.stop(); } catch { /* already stopped */ } }
-    sourcesRef.current = [];
-  }
-  function scheduleNote(freq: number, when: number, dur: number) {
-    const a = audioRef.current!;
-    const now = a.ctx.currentTime;
-    let t0 = when, d = dur;
-    if (t0 < now) { d -= now - t0; t0 = now; }
-    if (d <= 0.001) return;
-    const osc = a.ctx.createOscillator();
-    osc.type = "square";
-    osc.frequency.value = freq;
-    const g = a.ctx.createGain();
-    const peak = 0.9, sustain = 0.6, rel = 0.05;
-    g.gain.setValueAtTime(0.0001, t0);
-    g.gain.linearRampToValueAtTime(peak, t0 + 0.008);
-    g.gain.linearRampToValueAtTime(sustain, t0 + Math.min(0.09, d));
-    g.gain.setValueAtTime(sustain, Math.max(t0 + 0.01, t0 + d - rel));
-    g.gain.linearRampToValueAtTime(0.0001, t0 + d);
-    osc.connect(g);
-    g.connect(a.filter);
-    osc.start(t0);
-    osc.stop(t0 + d + 0.02);
-    sourcesRef.current.push(osc);
+    engineRef.current?.stopAll();
   }
   function scheduleFrom(beatOffset: number) {
-    const a = ensureAudio();
+    const engine = ensureEngine();
     const spb = secPerBeat();
-    tx.current.startTime = a.ctx.currentTime + 0.06 - beatOffset * spb;
+    tx.current.startTime = engine.ctx.currentTime + 0.06 - beatOffset * spb;
     const score = scoreRef.current!;
     for (const n of score.notes) {
       if (n.start + n.dur <= beatOffset + 1e-6) continue;
-      scheduleNote(midiToFreq(n.midi), tx.current.startTime + n.start * spb, n.dur * spb);
+      engine.play(n.midi, tx.current.startTime + n.start * spb, n.dur * spb);
     }
+  }
+  // A sampled sound has to download before it can play; a synth is ready now.
+  async function prepareSound(id: string): Promise<boolean> {
+    const engine = ensureEngine();
+    soundReadyRef.current = false;
+    if (findSound(id).kind === "sampled") setSoundStatus("loading");
+    try {
+      await engine.use(id);
+      if (soundIdRef.current !== id) return false; // another sound was picked meanwhile
+      soundReadyRef.current = true;
+      setSoundStatus("ready");
+      return true;
+    } catch {
+      if (soundIdRef.current === id) setSoundStatus("error");
+      return false;
+    }
+  }
+  async function onSoundChange(id: string) {
+    soundIdRef.current = id;
+    setSoundId(id);
+    const wasPlaying = tx.current.playing;
+    if (wasPlaying) pause();
+    const ok = await prepareSound(id);
+    if (wasPlaying && ok) play();
   }
 
   // ---- Transport ---------------------------------------------------------
   function startLoopIfNeeded() {
     if (!tx.current.raf) tx.current.raf = requestAnimationFrame(loopFnRef.current);
   }
-  function play() {
+  async function play() {
     const score = scoreRef.current;
     if (!score || tx.current.playing) return;
-    ensureAudio().ctx.resume();
+    const engine = ensureEngine();
+    engine.ctx.resume();
+    if (engine.soundId !== soundIdRef.current || !soundReadyRef.current) {
+      if (!(await prepareSound(soundIdRef.current))) return;
+    }
+    if (tx.current.playing) return;
     if (tx.current.beat >= score.totalBeats - 1e-6) tx.current.beat = 0;
     scheduleFrom(tx.current.beat);
     tx.current.playing = true;
@@ -274,8 +299,9 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         cv.height = Math.round(cssH * dpr);
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      const th = themeRef.current;
       ctx.clearRect(0, 0, cssW, cssH);
-      ctx.fillStyle = COL.bg;
+      ctx.fillStyle = th.background;
       ctx.fillRect(0, 0, cssW, cssH);
       if (!score) return;
 
@@ -305,7 +331,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       // grid up to the actual end of the score so no phantom measures appear.
       const rowRight = clamp(xFor(score.totalBeats), KEY_W, cssW);
       for (let m = lo; m <= hi; m++) {
-        ctx.fillStyle = isBlackKey(m) ? COL.rowBlack : COL.rowWhite;
+        ctx.fillStyle = isBlackKey(m) ? th.rowBlack : th.rowWhite;
         ctx.fillRect(KEY_W, yFor(m), rowRight - KEY_W, noteH);
       }
 
@@ -320,7 +346,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         for (let b = bar.start; b < end - 1e-6; b += 1) {
           const x = xFor(b);
           const isBarLine = b === bar.start;
-          ctx.strokeStyle = isBarLine ? COL.gridMeasure : COL.gridBeat;
+          ctx.strokeStyle = isBarLine ? th.gridBar : th.gridBeat;
           ctx.lineWidth = isBarLine ? 1.5 : 1;
           ctx.beginPath();
           ctx.moveTo(Math.round(x) + 0.5, RULER_H);
@@ -338,15 +364,16 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         const active = t.playing && t.beat >= n.start - 1e-6 && t.beat < n.start + n.dur - 1e-6;
         roundRect(ctx, x + 1, y + 1, w, h, 3);
         const grad = ctx.createLinearGradient(0, y, 0, y + h);
-        if (active) { grad.addColorStop(0, "#ffd966"); grad.addColorStop(1, "#f5a623"); }
-        else { grad.addColorStop(0, accentRef.current); grad.addColorStop(1, shade(accentRef.current, -0.18)); }
+        const fill = active ? th.activeNote : noteColorRef.current;
+        grad.addColorStop(0, fill);
+        grad.addColorStop(1, shade(fill, -0.18));
         ctx.fillStyle = grad;
         ctx.fill();
-        ctx.strokeStyle = active ? "#fff2c4" : shade(accentRef.current, -0.35);
+        ctx.strokeStyle = shade(active ? th.activeNote : noteColorRef.current, -0.35);
         ctx.lineWidth = 1;
         ctx.stroke();
         if (w > 24 && noteH > 12) {
-          ctx.fillStyle = active ? "#3a2a00" : "#eaf1ff";
+          ctx.fillStyle = active ? shade(th.activeNote, -0.8) : th.noteText;
           ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
           ctx.textBaseline = "middle";
           ctx.fillText(n.name, x + 5, y + h / 2 + 1);
@@ -356,7 +383,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       // playhead
       const phx = xFor(t.beat);
       if (phx >= KEY_W && phx <= cssW) {
-        ctx.strokeStyle = COL.playhead;
+        ctx.strokeStyle = th.playhead;
         ctx.lineWidth = 2;
         ctx.beginPath();
         ctx.moveTo(phx, RULER_H);
@@ -366,9 +393,9 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       ctx.restore();
 
       // --- ruler (over content) ---
-      ctx.fillStyle = COL.bg;
+      ctx.fillStyle = th.background;
       ctx.fillRect(0, 0, cssW, RULER_H);
-      ctx.fillStyle = COL.text;
+      ctx.fillStyle = th.text;
       ctx.font = "11px ui-monospace, Menlo, Consolas, monospace";
       ctx.textBaseline = "middle";
       for (const bar of score.bars) {
@@ -377,21 +404,21 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       }
 
       // --- keyboard gutter (over everything on the left) ---
-      ctx.fillStyle = COL.gutter;
+      ctx.fillStyle = th.keyWhite;
       ctx.fillRect(0, 0, KEY_W, cssH);
       for (let m = lo; m <= hi; m++) {
         const y = yFor(m);
         if (isBlackKey(m)) {
-          ctx.fillStyle = "#0a0d14";
+          ctx.fillStyle = th.keyBlack;
           ctx.fillRect(0, y, KEY_W - 8, noteH - 1);
         }
         if (m % 12 === 0 && noteH > 9) {
-          ctx.fillStyle = COL.text;
+          ctx.fillStyle = th.text;
           ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
           ctx.fillText(midiName(m), 5, y + noteH / 2);
         }
       }
-      ctx.strokeStyle = "#2a3247";
+      ctx.strokeStyle = th.gridBar;
       ctx.beginPath();
       ctx.moveTo(KEY_W + 0.5, 0);
       ctx.lineTo(KEY_W + 0.5, cssH);
@@ -408,7 +435,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
 
       if (t.playing) {
         const score = scoreRef.current!;
-        t.beat = (audioRef.current!.ctx.currentTime - t.startTime) / secPerBeat();
+        t.beat = (engineRef.current!.ctx.currentTime - t.startTime) / secPerBeat();
         if (t.beat >= score.totalBeats) {
           if (loopRef.current) {
             t.beat = 0;
@@ -516,12 +543,33 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       canvas.removeEventListener("keydown", onKeyDown);
       if (transport.raf) cancelAnimationFrame(transport.raf);
       transport.raf = 0;
-      stopAllVoices();
-      audioRef.current?.ctx.close().catch(() => {});
-      audioRef.current = null;
+      engineRef.current?.close();
+      engineRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // ---- Image export ------------------------------------------------------
+  // Saves what is on screen: the bars in view, in the current colours.
+  async function saveImage() {
+    const score = scoreRef.current;
+    const cv = canvasRef.current;
+    if (!score || !cv) return;
+    const px = pxRef.current;
+    const fromBeat = tx.current.offsetX / px;
+    const toBeat = (tx.current.offsetX + cv.clientWidth - KEY_W) / px;
+    const firstIdx = Math.max(0, score.bars.findIndex((_bar, i) => (score.bars[i + 1]?.start ?? score.totalBeats) > fromBeat + 1e-6));
+    let lastIdx = score.bars.findIndex((b) => b.start >= toBeat - 1e-6) - 1;
+    if (lastIdx < 0) lastIdx = score.bars.length - 1;
+    const width = Math.round(cv.clientWidth);
+    const imgHeight = Math.round(cv.clientHeight);
+    const svg = rollToSvg(score, {
+      fromBar: firstIdx + 1, toBar: Math.max(firstIdx, lastIdx) + 1, width, height: imgHeight,
+      theme: themeRef.current, noteColor: noteColorRef.current, barNumbers: true,
+    });
+    const name = (score.title || "piano-roll").replace(/[^\w-]+/g, "-").toLowerCase();
+    downloadBlob(await svgToPng(svg, width, imgHeight, 2), `${name}.png`);
+  }
 
   const onBpmChange = (v: number) => {
     if (!(v > 0)) return;
@@ -533,7 +581,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   };
 
   return (
-    <div className={"mpr-root " + (props.className || "")}>
+    <div ref={rootRef} className={"mpr-root " + (props.className || "")}>
       <style>{CSS}</style>
       <div className="mpr-header">
         <span className="mpr-title">{meta?.title ?? "—"}</span>
@@ -576,6 +624,18 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
           />
           bpm
         </span>
+        <label className="mpr-ctl">
+          Sound
+          <select value={soundId} onChange={(e) => onSoundChange(e.target.value)} aria-label="Sound">
+            {(["Synth", "Instrument"] as const).map((group) => (
+              <optgroup key={group} label={group === "Synth" ? "Synths" : "Instruments (download on first use)"}>
+                {SOUNDS.filter((snd) => snd.group === group).map((snd) => (
+                  <option key={snd.id} value={snd.id}>{snd.label}</option>
+                ))}
+              </optgroup>
+            ))}
+          </select>
+        </label>
         <span className="mpr-ctl">
           Zoom
           <input
@@ -587,16 +647,24 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
             onChange={(e) => setZoom(parseInt(e.target.value, 10))}
           />
         </span>
+        <button className="mpr-btn" onClick={saveImage} disabled={status !== "ready"} title="Save the bars in view as a PNG image">
+          ⤓ Image
+        </button>
       </div>
 
-      <canvas ref={canvasRef} className="mpr-canvas" style={{ height }} tabIndex={0} />
+      <canvas ref={canvasRef} className="mpr-canvas" style={{ height, background: theme.background }} tabIndex={0} />
 
       <div className={"mpr-status" + (status === "error" ? " mpr-error" : "")}>
         {status === "loading" && "Loading…"}
         {status === "ready" &&
           "Drag to pan · scroll to scrub · click to seek · ⏮ / double-click / Home to reset · audio starts on first play"}
         {status === "error" && "Error: " + errMsg}
+        {soundStatus === "loading" && <span className="mpr-sound-note"> · Downloading the {findSound(soundId).label.toLowerCase()} sound…</span>}
+        {soundStatus === "error" && (
+          <span className="mpr-sound-note mpr-error"> · Couldn't download that sound. Check the connection, or pick a synth.</span>
+        )}
       </div>
+      {findSound(soundId).kind === "sampled" && <div className="mpr-credit">{SAMPLE_CREDIT}</div>}
 
       {/* The roll never hides what it leaves out (docs/decisions.md). */}
       {status === "ready" && warnings.length > 0 && (
@@ -616,16 +684,6 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   );
 }
 
-// Lighten/darken a hex colour by `amt` (-1..1).
-function shade(hex: string, amt: number): string {
-  const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim());
-  if (!m) return hex;
-  const adj = (c: number) => clamp(Math.round(c + (amt < 0 ? c * amt : (255 - c) * amt)), 0, 255);
-  const r = adj(parseInt(m[1], 16));
-  const g = adj(parseInt(m[2], 16));
-  const b = adj(parseInt(m[3], 16));
-  return `rgb(${r},${g},${b})`;
-}
 
 /* Chrome styling spends the SITE's tokens (with the original POC values as
    fallbacks for any host page without tokens.css). The canvas interior keeps
@@ -656,10 +714,12 @@ const CSS = `
 .mpr-ctl { display: flex; align-items: center; gap: 6px; color: var(--mpr-muted); }
 .mpr-ctl input[type="range"] { width: 110px; accent-color: var(--mpr-accent); }
 .mpr-ctl input[type="number"] { width: 60px; background: var(--mpr-panel); color: var(--mpr-text); border: 1px solid var(--mpr-border); border-radius: 6px; padding: 5px 7px; font: inherit; }
-.mpr-canvas { display: block; width: 100%; touch-action: none; background: #0c0e14; outline: none; }
+.mpr-canvas { display: block; width: 100%; touch-action: none; outline: none; }
 .mpr-canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--mpr-accent); }
 .mpr-status { padding: 10px 16px; color: var(--mpr-muted); font-size: 12px; }
 .mpr-error { color: #ff8a8a; }
+.mpr-credit { padding: 0 16px 10px; color: var(--mpr-muted); font-size: 11px; opacity: .8; }
+.mpr-ctl select { background: var(--mpr-panel); color: var(--mpr-text); border: 1px solid var(--mpr-border); border-radius: 6px; padding: 5px 7px; font: inherit; }
 .mpr-warnings { padding: 0 16px 12px; color: var(--mpr-muted); font-size: 12px; }
 .mpr-warnings summary { cursor: pointer; }
 .mpr-warnings ul { margin: 6px 0 0; padding-left: 18px; }
