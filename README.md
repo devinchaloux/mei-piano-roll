@@ -7,10 +7,9 @@ anything in the file it could not show faithfully.
 ## Status
 
 **2026-10-07:** the first reader works. It handles short, cleanly encoded files.
-On the MEI project's sample files it reads everything without crashing, but
-reports gaps in most of them (meter or key written where it doesn't look, ties,
-pickup bars). The second reader, for everything else, is not built yet. Nothing
-is published to npm yet.
+On the MEI project's 617 sample files it reads everything without crashing; most
+still report a gap (ties, grace notes, repeats, mid-piece changes). The second
+reader, for everything else, is not built yet. Nothing is published to npm yet.
 
 ## Try it
 

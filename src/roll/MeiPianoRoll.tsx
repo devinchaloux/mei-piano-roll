@@ -237,9 +237,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         setMeta({
           title: score.title,
           composer: score.composer,
-          line: `${score.notes.length} notes · ${score.meterCount}/${score.meterUnit} · ${Math.round(
-            score.totalBeats / score.measureBeats,
-          )} bars`,
+          line: `${score.notes.length} notes · ${score.meterCount}/${score.meterUnit} · ${score.bars.length} bars`,
         });
         setStatus("ready");
         drawRef.current();
@@ -311,18 +309,25 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         ctx.fillRect(KEY_W, yFor(m), rowRight - KEY_W, noteH);
       }
 
-      const firstBeat = Math.max(0, Math.floor(offset / px));
-      const lastBeat = Math.min(Math.ceil((offset + trackW) / px), Math.floor(score.totalBeats + 1e-6));
-      for (let b = firstBeat; b <= lastBeat; b++) {
-        const x = xFor(b);
-        const isMeasure = Math.abs(b % score.measureBeats) < 1e-6;
-        ctx.strokeStyle = isMeasure ? COL.gridMeasure : COL.gridBeat;
-        ctx.lineWidth = isMeasure ? 1.5 : 1;
-        ctx.beginPath();
-        ctx.moveTo(Math.round(x) + 0.5, RULER_H);
-        ctx.lineTo(Math.round(x) + 0.5, cssH);
-        ctx.stroke();
-      }
+      // Bar lines where the reader says each bar starts (a pickup is short, so
+      // bars are not simply every N beats from zero); beat lines every quarter
+      // note counted from each bar's start.
+      const viewFirst = offset / px;
+      const viewLast = (offset + trackW) / px;
+      score.bars.forEach((bar, i) => {
+        const end = i + 1 < score.bars.length ? score.bars[i + 1].start : score.totalBeats;
+        if (end < viewFirst || bar.start > viewLast) return;
+        for (let b = bar.start; b < end - 1e-6; b += 1) {
+          const x = xFor(b);
+          const isBarLine = b === bar.start;
+          ctx.strokeStyle = isBarLine ? COL.gridMeasure : COL.gridBeat;
+          ctx.lineWidth = isBarLine ? 1.5 : 1;
+          ctx.beginPath();
+          ctx.moveTo(Math.round(x) + 0.5, RULER_H);
+          ctx.lineTo(Math.round(x) + 0.5, cssH);
+          ctx.stroke();
+        }
+      });
 
       for (const n of score.notes) {
         const x = xFor(n.start);
@@ -366,10 +371,9 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       ctx.fillStyle = COL.text;
       ctx.font = "11px ui-monospace, Menlo, Consolas, monospace";
       ctx.textBaseline = "middle";
-      const totalMeasures = Math.ceil(score.totalBeats / score.measureBeats);
-      for (let i = 0; i < totalMeasures; i++) {
-        const x = xFor(i * score.measureBeats);
-        if (x >= KEY_W - 2 && x <= cssW) ctx.fillText(String(i + 1), x + 4, RULER_H / 2);
+      for (const bar of score.bars) {
+        const x = xFor(bar.start);
+        if (x >= KEY_W - 2 && x <= cssW) ctx.fillText(bar.label, x + 4, RULER_H / 2);
       }
 
       // --- keyboard gutter (over everything on the left) ---

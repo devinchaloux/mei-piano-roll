@@ -26,14 +26,24 @@ export interface MeiWarning {
   count: number
 }
 
+/** Where a bar begins, for drawing bar lines and numbers. */
+export interface MeiBar {
+  /** Onset, in quarter-note beats. */
+  start: number
+  /** The bar's number as the file gives it (a pickup is often "0"). */
+  label: string
+}
+
 export interface MeiScore {
   title: string
   composer: string
   bpm: number
   meterCount: number
   meterUnit: number
-  /** Length of one bar, in quarter-note beats. */
+  /** Length of a full bar in the opening meter, in quarter-note beats. */
   measureBeats: number
+  /** Every bar, in order. Pickups and other short bars keep their real length. */
+  bars: MeiBar[]
   totalBeats: number
   notes: MeiNote[]
   warnings: MeiWarning[]

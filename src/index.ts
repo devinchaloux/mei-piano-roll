@@ -4,4 +4,4 @@
 export { default as MeiPianoRoll } from './roll/MeiPianoRoll'
 export type { MeiPianoRollProps } from './roll/MeiPianoRoll'
 export { parseNative } from './mei/parseNative'
-export type { MeiNote, MeiScore, MeiWarning } from './mei/types'
+export type { MeiBar, MeiNote, MeiScore, MeiWarning } from './mei/types'

@@ -91,6 +91,28 @@ and ran out of memory (8 GB) partway through the samples.
 
 **Why.** Memory stays flat (about 55 MB) whatever the number of files.
 
+### 2026-10-07: the native reader reads MEI where modern files write it
+
+**Choice.** The reader now:
+- takes the opening meter from any staff, the score, a `<meterSig>`, or the
+  header's description of the work, and each staff's opening key from the
+  staff, the score, a `<keySig>` or MEI 3's `key.sig`;
+- takes a chord's duration from its notes when the chord has none;
+- keeps a bar flagged `metcon="false"` (meant to be short, such as a pickup) at
+  its real length, and reports where every bar starts, so the player draws bar
+  lines and numbers from the file instead of every N beats from zero;
+- reads only `<music>`, never an incipit quoted in the header;
+- follows `copyof` references, MEI's shorthand for repeated content.
+
+**Rejected.** Leaving these to the second reader: they are a few lines each,
+and files exported by notation software hit the first one constantly.
+
+**Why.** The stress test measured them. On the 617 sample files, files read
+with no warnings went from 0 to 35, wrong-meter warnings from 474 files to 8
+(the 8 really have no opening meter), and padded short bars from 367 to 139.
+An unflagged short bar is still padded and reported: it is more often an
+encoding slip than a pickup.
+
 ## Open questions
 
 | Question | Options |

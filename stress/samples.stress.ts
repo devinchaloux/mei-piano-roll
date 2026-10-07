@@ -65,7 +65,7 @@ function readOne(version: string, file: string): Row {
     return {
       version, piece,
       notes: s.notes.length,
-      bars: Math.round(s.totalBeats / s.measureBeats),
+      bars: s.bars.length,
       ms: Math.round(performance.now() - t0),
       warnings: s.warnings.map((w) => w.code),
       error: '',
