@@ -147,3 +147,7 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# MEI sample files for the stress test: downloaded by `npm run samples`, never
+# committed (docs/decisions.md, 2026-10-07)
+fixtures/

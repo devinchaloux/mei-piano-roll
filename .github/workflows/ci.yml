@@ -1,0 +1,51 @@
+name: CI
+
+# Runs on every branch push so a session gets early signal, and again on the PR
+# into main.
+on:
+  push:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+# A push to a branch with an open PR would otherwise queue two identical runs.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      # `npm ci` (not `install`) so the lockfile is authoritative: a run never
+      # picks up a newer dependency than the one tested locally.
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      - name: Lint
+        run: npm run lint
+
+      # A comment marked TEMPORARY is a merge blocker by this repo's convention.
+      - name: No TEMPORARY markers
+        run: |
+          if grep -rn "TEMPORARY" src demo; then
+            echo "::error::Resolve the TEMPORARY markers above before merging."
+            exit 1
+          fi
+
+      - name: Tests
+        run: npm run test:run
+
+      # `build` starts with `tsc`, so this is also the type check.
+      - name: Build
+        run: npm run build
+
+      # The stress test (`npm run stress`) is not run here: it downloads about
+      # 113 MB of sample files, and its job is to show what breaks, not to pass.
