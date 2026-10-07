@@ -5,7 +5,9 @@ import { defineConfig } from 'vitest/config'
 // and takes a minute; the everyday tests must run offline in seconds.
 export default defineConfig({
   test: {
-    environment: 'jsdom',
+    globals: true,
+    // Plain Node: the stress test makes its own simulated browser per file.
+    environment: 'node',
     include: ['stress/**/*.stress.ts'],
     testTimeout: 600_000,
   },
