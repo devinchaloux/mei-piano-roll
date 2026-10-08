@@ -14,13 +14,15 @@ export interface TransportNote {
   /** Quarter-note beats. */
   start: number
   dur: number
+  /** Which part plays it; 0 when the score has one part. */
+  part?: number
 }
 
 /** What the transport needs from the sound engine. */
 export interface TransportOutput {
   /** The audio clock, in seconds. */
   now(): number
-  play(midi: number, when: number, duration: number): void
+  play(midi: number, when: number, duration: number, part: number): void
   /** Silences every sounding note at once. */
   stopAll(): void
 }
@@ -161,7 +163,7 @@ export class Transport {
       if (when > horizon) break
       // A note already over by the restart point is skipped; one still sounding
       // there plays its remainder (the engine trims notes that start in the past).
-      if (n.start + n.dur > this.from + 1e-6) this.out.play(n.midi, when, n.dur * spb)
+      if (n.start + n.dur > this.from + 1e-6) this.out.play(n.midi, when, n.dur * spb, n.part ?? 0)
       this.next++
     }
     if (this.position() >= this.total) {

@@ -1,10 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import { parseNative, midiName, isBlackKey } from "../mei/parseNative";
-import type { MeiNote, MeiScore, MeiWarning } from "../mei/types";
+import type { MeiPart, MeiScore, MeiWarning } from "../mei/types";
 import { SoundEngine, type SoundStatus } from "../audio/engine";
 import { Transport } from "../audio/transport";
 import { SOUNDS, DEFAULT_SOUND, SAMPLE_CREDIT, findSound } from "../audio/sounds";
+import { soundForPart } from "../audio/instruments";
 import { resolveTheme, shade, type RollTheme, type ThemeName } from "./themes";
+import { partColors as defaultPartColors } from "./noteColors";
+import { layoutLanes, MIN_LANE_HEIGHT, type Lane } from "./lanes";
 import { rollToSvg } from "../render/svg";
 import { svgToPng, downloadBlob } from "../render/toPng";
 
@@ -16,6 +19,8 @@ import { svgToPng, downloadBlob } from "../render/toPng";
  * playback-follow are smooth — no giant scroll-canvas, no scrollLeft jumps),
  * and plays it with a choice of sounds: built-in synths, or sampled instruments
  * downloaded when chosen (src/audio/). Colors come from a theme (./themes.ts).
+ * A file with several parts (instruments) shows each in its own color, on one
+ * roll or one lane per part, with mute, solo and a sound for each.
  *
  * Usage:
  *   <MeiPianoRoll meiText={xmlString} />
@@ -36,12 +41,19 @@ export interface MeiPianoRollProps {
   /**
    * Note color. Without it, the page's `--accent` CSS variable is used (and
    * followed live, so a site's accent switch recolors the notes), then the
-   * theme's own note color.
+   * theme's own note color. With several parts, the first part's color.
    */
   accent?: string;
+  /** One color per part, in score order. Default: the note color, then quick-pick colors. */
+  partColors?: string[];
+  /** Start with each part on its own roll. Default false: all parts on one roll. */
+  separateParts?: boolean;
   /** Color theme for the roll: a preset name or your own colors. Default "studio". */
   theme?: ThemeName | RollTheme;
-  /** Starting sound, by id (see SOUNDS). Default the square lead. */
+  /**
+   * Starting sound for every part, by id (see SOUNDS). Default: each part's
+   * nearest sound to the instrument the file names, else the square lead.
+   */
   sound?: string;
   /**
    * "full" (default): the roll with its controls underneath. "compact": the roll
@@ -61,15 +73,14 @@ export interface MeiPianoRollProps {
 // ---------------------------------------------------------------------------
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
-function pitchRange(notes: MeiNote[]): { lo: number; hi: number } {
-  if (!notes.length) return { lo: 60, hi: 72 };
-  let lo = Infinity, hi = -Infinity;
-  for (const n of notes) {
-    if (n.midi < lo) lo = n.midi;
-    if (n.midi > hi) hi = n.midi;
-  }
-  return { lo: lo - 1, hi: hi + 1 };
+// The sound each part starts with: the page's choice for all, else the nearest
+// to the instrument the file names, else the default.
+function startingSounds(parts: MeiPart[], pageSound: string | undefined): string[] {
+  const count = Math.max(parts.length, 1);
+  return Array.from({ length: count }, (_, i) =>
+    findSound(pageSound ?? (parts[i] ? soundForPart(parts[i]) ?? undefined : undefined)).id);
 }
+const unique = <T,>(xs: T[]) => [...new Set(xs)];
 function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   r = Math.min(r, w / 2, h / 2);
   c.beginPath();
@@ -110,7 +121,10 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   const loopRef = useRef<boolean>(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const themeRef = useRef<RollTheme>(theme);
-  const noteColorRef = useRef<string>(props.accent ?? theme.note);
+  // One color per part; the draw loop reads these refs, never React state.
+  const colorsRef = useRef<string[]>([props.accent ?? theme.note]);
+  const audibleRef = useRef<boolean[]>([true]);
+  const separateRef = useRef<boolean>(!!props.separateParts);
   const engineRef = useRef<SoundEngine | null>(null);
   const drawRef = useRef<() => void>(() => {});
   const loopFnRef = useRef<() => void>(() => {});
@@ -141,12 +155,29 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   // Updated straight from the draw loop, so the readouts move without re-rendering.
   const positionRef = useRef<HTMLSpanElement | null>(null);
   const progressRef = useRef<HTMLDivElement | null>(null);
-  const [soundId, setSoundId] = useState<string>(findSound(props.sound ?? DEFAULT_SOUND).id);
-  const [soundStatus, setSoundStatus] = useState<SoundStatus>("ready");
-  // Refs as well as state: the keyboard shortcuts are wired up once, on mount,
-  // and must still see the sound chosen since.
-  const soundIdRef = useRef(soundId);
-  const soundReadyRef = useRef(false);
+
+  // ---- Parts ---------------------------------------------------------------
+  const [parts, setParts] = useState<MeiPart[]>([]);
+  const [separate, setSeparate] = useState<boolean>(!!props.separateParts);
+  const [muted, setMuted] = useState<Set<number>>(() => new Set());
+  const [soloed, setSoloed] = useState<Set<number>>(() => new Set());
+  const multi = parts.length > 1;
+  // Solo plays only the soloed parts; a muted part stays silent either way.
+  const isAudible = (p: number) => !muted.has(p) && (soloed.size === 0 || soloed.has(p));
+  const toggleIn = (set: Set<number>, p: number) => {
+    const next = new Set(set);
+    if (!next.delete(p)) next.add(p);
+    return next;
+  };
+
+  // One sound per part. Refs as well as state: the keyboard shortcuts are wired
+  // up once, on mount, and must still see the sounds chosen since. The version
+  // goes up with every change, so a download that finishes after a newer
+  // choice knows it has been superseded.
+  const [partSounds, setPartSounds] = useState<string[]>(() => startingSounds([], props.sound));
+  const partSoundsRef = useRef(partSounds);
+  const soundsVersionRef = useRef(0);
+  const [soundLoad, setSoundLoad] = useState<{ status: SoundStatus; ids: string[] }>({ status: "ready", ids: [] });
   const [pageAccent, setPageAccent] = useState<string | null>(null);
   // A ref, so a new onLoad function from the parent doesn't re-read the file.
   const onLoadRef = useRef(props.onLoad);
@@ -156,6 +187,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   useEffect(() => { bpmRef.current = bpm; }, [bpm]);
   useEffect(() => { pxRef.current = zoom; drawRef.current(); }, [zoom]);
   useEffect(() => { loopRef.current = loop; if (transportRef.current) transportRef.current.loop = loop; }, [loop]);
+  useEffect(() => { separateRef.current = separate; drawRef.current(); }, [separate]);
   // Opening or closing the compact player swaps the readouts; fill the new ones.
   useEffect(() => { drawRef.current(); }, [layout]);
 
@@ -175,22 +207,35 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     return () => mo.disconnect();
   }, [props.accent]);
   const noteColor = props.accent ?? pageAccent ?? theme.note;
+  const colors = props.partColors?.length ? props.partColors : defaultPartColors(Math.max(parts.length, 1), theme, noteColor);
+  const colorsKey = colors.join(",");
   useEffect(() => {
     themeRef.current = theme;
-    noteColorRef.current = noteColor;
+    colorsRef.current = colorsKey.split(",");
     drawRef.current();
-  }, [theme, noteColor]);
+  }, [theme, colorsKey]);
 
+  // Mute and solo reach the sound at once, and the roll fades silent parts.
+  const audibleKey = parts.map((_p, i) => (isAudible(i) ? "1" : "0")).join("");
+  useEffect(() => {
+    audibleRef.current = [...audibleKey].map((c) => c === "1");
+    applyAudible();
+    drawRef.current();
+  }, [audibleKey]);
+  function applyAudible() {
+    const engine = engineRef.current;
+    if (engine) audibleRef.current.forEach((on, i) => engine.setAudible(i, on));
+  }
 
   // ---- Audio -------------------------------------------------------------
   // The engine and transport are made on first use: browsers only allow sound
   // after a click.
   function ensureEngine(): SoundEngine {
     if (!engineRef.current) {
-      const engine = new SoundEngine(soundIdRef.current);
+      const engine = new SoundEngine();
       const transport = new Transport({
         now: () => engine.ctx.currentTime,
-        play: (midi, when, dur) => engine.play(midi, when, dur),
+        play: (midi, when, dur, part) => engine.play(midi, when, dur, part),
         stopAll: () => engine.stopAll(),
       });
       transport.loop = loopRef.current;
@@ -205,38 +250,47 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       if (score) {
         transport.setScore(score.notes, score.totalBeats);
         transport.seek(tx.current.beat);
+        engine.setPartCount(score.parts.length);
       }
       engineRef.current = engine;
       transportRef.current = transport;
+      applyAudible();
     }
     return engineRef.current;
   }
-  // A sampled sound has to download before it can play; a synth is ready now.
-  // "superseded" means another sound was picked while this one downloaded.
-  async function prepareSound(id: string): Promise<"ready" | "superseded" | "failed"> {
+  function soundsReady(engine: SoundEngine): boolean {
+    return partSoundsRef.current.every((id, part) => engine.isReady(part, id));
+  }
+  // Every part's sound must be ready before playback: a sampled one has to
+  // download, a synth is ready now. "superseded" means a sound was changed
+  // again while this one downloaded.
+  async function prepareSounds(): Promise<"ready" | "superseded" | "failed"> {
     const engine = ensureEngine();
-    soundReadyRef.current = false;
-    if (findSound(id).kind === "sampled") setSoundStatus("loading");
-    try {
-      await engine.use(id);
-      if (soundIdRef.current !== id) return "superseded";
-      soundReadyRef.current = true;
-      setSoundStatus("ready");
-      return "ready";
-    } catch {
-      if (soundIdRef.current !== id) return "superseded";
-      setSoundStatus("error");
+    const version = soundsVersionRef.current;
+    const sounds = partSoundsRef.current;
+    const pending = sounds.filter((id, part) => !engine.isReady(part, id));
+    if (pending.some((id) => findSound(id).kind === "sampled")) setSoundLoad({ status: "loading", ids: unique(pending) });
+    await Promise.allSettled(sounds.map((id, part) => engine.use(part, id)));
+    if (version !== soundsVersionRef.current) return "superseded";
+    const failed = sounds.filter((id, part) => !engine.isReady(part, id));
+    if (failed.length) {
+      setSoundLoad({ status: "error", ids: unique(failed) });
       return "failed";
     }
+    setSoundLoad({ status: "ready", ids: [] });
+    return "ready";
   }
   // Switching sound keeps the playhead: the old sound is silenced at once, and
   // playback carries on with the new one as soon as it is ready.
-  async function onSoundChange(id: string) {
-    soundIdRef.current = id;
-    setSoundId(id);
+  async function onSoundChange(part: number, id: string) {
+    const next = [...partSoundsRef.current];
+    next[part] = id;
+    partSoundsRef.current = next;
+    setPartSounds(next);
+    soundsVersionRef.current++;
     const transport = transportRef.current;
     if (transport?.playing) transport.pause();
-    const result = await prepareSound(id);
+    const result = await prepareSounds();
     if (result === "superseded" || !wantPlayRef.current) return;
     if (result === "ready") {
       transportRef.current?.play();
@@ -258,8 +312,8 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     const token = ++startTokenRef.current;
     const engine = ensureEngine();
     engine.ctx.resume();
-    if (engine.soundId !== soundIdRef.current || !soundReadyRef.current) {
-      const result = await prepareSound(soundIdRef.current);
+    if (!soundsReady(engine)) {
+      const result = await prepareSounds();
       if (token !== startTokenRef.current) return; // paused, or played again, meanwhile
       // A newer sound was picked while this one downloaded: its own change
       // handler starts playback when it is ready, since the listener still wants it.
@@ -318,6 +372,14 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         setPlaying(false);
         tx.current.beat = 0;
         transportRef.current?.setScore(score.notes, score.totalBeats);
+        engineRef.current?.setPartCount(score.parts.length);
+        // Each part starts with its own sound, unmuted.
+        setParts(score.parts);
+        setMuted(new Set());
+        setSoloed(new Set());
+        partSoundsRef.current = startingSounds(score.parts, props.sound);
+        setPartSounds(partSoundsRef.current);
+        soundsVersionRef.current++;
         setWarnings(score.warnings);
         onLoadRef.current?.(score);
         if (props.bpm == null) {
@@ -328,7 +390,12 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         setMeta({
           title: score.title,
           composer: score.composer,
-          line: `${score.notes.length} notes · ${score.meterCount}/${score.meterUnit} · ${score.bars.length} bars`,
+          line: [
+            `${score.notes.length} notes`,
+            ...(score.parts.length > 1 ? [`${score.parts.length} parts`] : []),
+            `${score.meterCount}/${score.meterUnit}`,
+            `${score.bars.length} bars`,
+          ].join(" · "),
         });
         setStatus("ready");
         drawRef.current();
@@ -340,6 +407,8 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     }
     load();
     return () => { canceled = true; };
+    // props.sound only sets the starting sounds; changing it later doesn't re-read the file.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, meiText, props.bpm]);
 
   // Drawing + input + loop live in one mount effect using refs only.
@@ -349,6 +418,16 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     // The transport object itself is never replaced (only its fields change), so
     // the cleanup below can safely use this same reference.
     const transport = tx.current;
+
+    // Lanes change only with the file, the view and the height; not every frame.
+    let lanesCache: { score: MeiScore | null; key: string; lanes: Lane[] } = { score: null, key: "", lanes: [] };
+    const lanesFor = (score: MeiScore, separate: boolean, cssH: number): Lane[] => {
+      const key = `${separate}|${cssH}`;
+      if (lanesCache.score !== score || lanesCache.key !== key) {
+        lanesCache = { score, key, lanes: layoutLanes(score.notes, { separate, top: RULER_H, height: cssH - RULER_H }) };
+      }
+      return lanesCache.lanes;
+    };
 
     const draw = () => {
       const cv = canvasRef.current;
@@ -371,9 +450,6 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       ctx.fillRect(0, 0, cssW, cssH);
       if (!score) return;
 
-      const { lo, hi } = pitchRange(score.notes);
-      const rows = hi - lo + 1;
-      const noteH = (cssH - RULER_H) / rows;
       const px = pxRef.current;
       const trackW = cssW - KEY_W;
       const contentW = score.totalBeats * px;
@@ -383,9 +459,11 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       t.targetOffsetX = clamp(t.targetOffsetX, 0, maxOffset);
       t.offsetX = clamp(t.offsetX, 0, maxOffset);
       const offset = t.offsetX;
-
-      const yFor = (m: number) => RULER_H + (hi - m) * noteH;
       const xFor = (b: number) => KEY_W + b * px - offset;
+      const colors = colorsRef.current;
+      const audible = audibleRef.current;
+      const lanes = lanesFor(score, separateRef.current, cssH);
+      const labelLanes = lanes.length > 1;
 
       // --- clipped track content ---
       ctx.save();
@@ -396,53 +474,78 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       // The piece may be narrower than the canvas (zoomed out); only shade and
       // grid up to the actual end of the score so no phantom measures appear.
       const rowRight = clamp(xFor(score.totalBeats), KEY_W, cssW);
-      for (let m = lo; m <= hi; m++) {
-        ctx.fillStyle = isBlackKey(m) ? th.rowBlack : th.rowWhite;
-        ctx.fillRect(KEY_W, yFor(m), rowRight - KEY_W, noteH);
-      }
-
-      // Bar lines where the reader says each bar starts (a pickup is short, so
-      // bars are not simply every N beats from zero); beat lines every quarter
-      // note counted from each bar's start.
       const viewFirst = offset / px;
       const viewLast = (offset + trackW) / px;
-      score.bars.forEach((bar, i) => {
-        const end = i + 1 < score.bars.length ? score.bars[i + 1].start : score.totalBeats;
-        if (end < viewFirst || bar.start > viewLast) return;
-        for (let b = bar.start; b < end - 1e-6; b += 1) {
-          const x = xFor(b);
-          const isBarLine = b === bar.start;
-          ctx.strokeStyle = isBarLine ? th.gridBar : th.gridBeat;
-          ctx.lineWidth = isBarLine ? 1.5 : 1;
-          ctx.beginPath();
-          ctx.moveTo(Math.round(x) + 0.5, RULER_H);
-          ctx.lineTo(Math.round(x) + 0.5, cssH);
-          ctx.stroke();
+      for (const lane of lanes) {
+        const noteH = lane.height / (lane.hi - lane.lo + 1);
+        const yFor = (m: number) => lane.top + (lane.hi - m) * noteH;
+        const bottom = lane.top + lane.height;
+        for (let m = lane.lo; m <= lane.hi; m++) {
+          ctx.fillStyle = isBlackKey(m) ? th.rowBlack : th.rowWhite;
+          ctx.fillRect(KEY_W, yFor(m), rowRight - KEY_W, noteH);
         }
-      });
 
-      for (const n of score.notes) {
-        const x = xFor(n.start);
-        const w = Math.max(2, n.dur * px - 2);
-        if (x + w < KEY_W || x > cssW) continue;
-        const y = yFor(n.midi);
-        const h = noteH - 2;
-        const active = !!transportRef.current?.playing && t.beat >= n.start - 1e-6 && t.beat < n.start + n.dur - 1e-6;
-        roundRect(ctx, x + 1, y + 1, w, h, 3);
-        const grad = ctx.createLinearGradient(0, y, 0, y + h);
-        const fill = active ? th.activeNote : noteColorRef.current;
-        grad.addColorStop(0, fill);
-        grad.addColorStop(1, shade(fill, -0.18));
-        ctx.fillStyle = grad;
-        ctx.fill();
-        ctx.strokeStyle = shade(active ? th.activeNote : noteColorRef.current, -0.35);
-        ctx.lineWidth = 1;
-        ctx.stroke();
-        if (w > 24 && noteH > 12) {
-          ctx.fillStyle = active ? shade(th.activeNote, -0.8) : th.noteText;
-          ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
+        // Bar lines where the reader says each bar starts (a pickup is short, so
+        // bars are not simply every N beats from zero); beat lines every quarter
+        // note counted from each bar's start.
+        score.bars.forEach((bar, i) => {
+          const end = i + 1 < score.bars.length ? score.bars[i + 1].start : score.totalBeats;
+          if (end < viewFirst || bar.start > viewLast) return;
+          for (let b = bar.start; b < end - 1e-6; b += 1) {
+            const x = xFor(b);
+            const isBarLine = b === bar.start;
+            ctx.strokeStyle = isBarLine ? th.gridBar : th.gridBeat;
+            ctx.lineWidth = isBarLine ? 1.5 : 1;
+            ctx.beginPath();
+            ctx.moveTo(Math.round(x) + 0.5, lane.top);
+            ctx.lineTo(Math.round(x) + 0.5, bottom);
+            ctx.stroke();
+          }
+        });
+
+        for (const n of score.notes) {
+          if (labelLanes && n.part !== lane.parts[0]) continue;
+          const x = xFor(n.start);
+          const w = Math.max(2, n.dur * px - 2);
+          if (x + w < KEY_W || x > cssW) continue;
+          const y = yFor(n.midi);
+          const h = noteH - 2;
+          const on = audible[n.part] ?? true;
+          const active = on && !!transportRef.current?.playing && t.beat >= n.start - 1e-6 && t.beat < n.start + n.dur - 1e-6;
+          const color = colors[n.part] ?? colors[0];
+          const fill = active ? th.activeNote : color;
+          // A muted part stays visible, faded, so the music doesn't seem to vanish.
+          ctx.globalAlpha = on ? 1 : 0.3;
+          roundRect(ctx, x + 1, y + 1, w, h, 3);
+          const grad = ctx.createLinearGradient(0, y, 0, y + h);
+          grad.addColorStop(0, fill);
+          grad.addColorStop(1, shade(fill, -0.18));
+          ctx.fillStyle = grad;
+          ctx.fill();
+          ctx.strokeStyle = shade(fill, -0.35);
+          ctx.lineWidth = 1;
+          ctx.stroke();
+          if (w > 24 && noteH > 12) {
+            ctx.fillStyle = active ? shade(th.activeNote, -0.8) : th.noteText;
+            ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
+            ctx.textBaseline = "middle";
+            ctx.fillText(n.name, x + 5, y + h / 2 + 1);
+          }
+          ctx.globalAlpha = 1;
+        }
+
+        // Each lane's part name, top left, on a backing so notes don't hide it.
+        if (labelLanes) {
+          const label = score.parts[lane.parts[0]]?.label ?? "";
+          ctx.font = "11px ui-monospace, Menlo, Consolas, monospace";
           ctx.textBaseline = "middle";
-          ctx.fillText(n.name, x + 5, y + h / 2 + 1);
+          const w = ctx.measureText(label).width;
+          ctx.globalAlpha = 0.75;
+          ctx.fillStyle = th.background;
+          ctx.fillRect(KEY_W + 2, lane.top + 2, w + 10, 16);
+          ctx.globalAlpha = 1;
+          ctx.fillStyle = th.text;
+          ctx.fillText(label, KEY_W + 7, lane.top + 10);
         }
       }
 
@@ -469,19 +572,23 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         if (x >= KEY_W - 2 && x <= cssW) ctx.fillText(bar.label, x + 4, RULER_H / 2);
       }
 
-      // --- keyboard gutter (over everything on the left) ---
-      ctx.fillStyle = th.keyWhite;
-      ctx.fillRect(0, 0, KEY_W, cssH);
-      for (let m = lo; m <= hi; m++) {
-        const y = yFor(m);
-        if (isBlackKey(m)) {
-          ctx.fillStyle = th.keyBlack;
-          ctx.fillRect(0, y, KEY_W - 8, noteH - 1);
-        }
-        if (m % 12 === 0 && noteH > 9) {
-          ctx.fillStyle = th.text;
-          ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
-          ctx.fillText(midiName(m), 5, y + noteH / 2);
+      // --- keyboard gutter (over everything on the left), one per lane ---
+      for (const lane of lanes) {
+        const noteH = lane.height / (lane.hi - lane.lo + 1);
+        const yFor = (m: number) => lane.top + (lane.hi - m) * noteH;
+        ctx.fillStyle = th.keyWhite;
+        ctx.fillRect(0, lane.top, KEY_W, lane.height);
+        for (let m = lane.lo; m <= lane.hi; m++) {
+          const y = yFor(m);
+          if (isBlackKey(m)) {
+            ctx.fillStyle = th.keyBlack;
+            ctx.fillRect(0, y, KEY_W - 8, noteH - 1);
+          }
+          if (m % 12 === 0 && noteH > 9) {
+            ctx.fillStyle = th.text;
+            ctx.font = "10px ui-monospace, Menlo, Consolas, monospace";
+            ctx.fillText(midiName(m), 5, y + noteH / 2);
+          }
         }
       }
       ctx.strokeStyle = th.gridBar;
@@ -627,7 +734,9 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     const imgHeight = Math.round(cv.clientHeight);
     const svg = rollToSvg(score, {
       fromBar: firstIdx + 1, toBar: Math.max(firstIdx, lastIdx) + 1, width, height: imgHeight,
-      theme: themeRef.current, noteColor: noteColorRef.current, barNumbers: true,
+      theme: themeRef.current, partColors: colorsRef.current, barNumbers: true,
+      separateParts: separateRef.current,
+      fadedParts: audibleRef.current.flatMap((on, i) => (on ? [] : [i])),
     });
     const name = (score.title || "piano-roll").replace(/[^\w-]+/g, "-").toLowerCase();
     downloadBlob(await svgToPng(svg, width, imgHeight, 2), `${name}.png`);
@@ -641,13 +750,15 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   };
 
   const ready = status === "ready";
-  const sound = findSound(soundId);
-  const soundSelect = (
+  // Separated, the roll grows rather than squeeze each lane below a readable height.
+  const canvasHeight = separate && multi ? Math.max(height, RULER_H + parts.length * (MIN_LANE_HEIGHT + 6)) : height;
+  const soundLabels = soundLoad.ids.map((id) => findSound(id).label).join(", ");
+  const soundSelect = (part: number) => (
     <select
       className="mpr-select"
-      value={soundId}
-      onChange={(e) => onSoundChange(e.target.value)}
-      aria-label="Sound"
+      value={partSounds[part] ?? DEFAULT_SOUND}
+      onChange={(e) => onSoundChange(part, e.target.value)}
+      aria-label={multi ? `Sound for ${parts[part]?.label}` : "Sound"}
       title="Sound. Instruments load the first time you choose them."
     >
       {(["Synth", "Instrument"] as const).map((group) => (
@@ -670,6 +781,20 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       {warnings.length} not shown
     </button>
   );
+  // Several parts: a row for each, with its color, mute, solo and sound.
+  const partRows = multi && ready && (
+    <div className="mpr-parts">
+      {parts.map((part, i) => (
+        <div key={i} className={"mpr-part" + (isAudible(i) ? "" : " mpr-part-off")}>
+          <span className="mpr-swatch" style={{ background: colors[i] ?? colors[0] }} />
+          <span className="mpr-part-name" title={part.label}>{part.label}</span>
+          <button className="mpr-ms" aria-pressed={muted.has(i)} onClick={() => setMuted((m) => toggleIn(m, i))} title="Mute" aria-label={`Mute ${part.label}`}>M</button>
+          <button className="mpr-ms mpr-solo" aria-pressed={soloed.has(i)} onClick={() => setSoloed((m) => toggleIn(m, i))} title="Solo" aria-label={`Solo ${part.label}`}>S</button>
+          {soundSelect(i)}
+        </div>
+      ))}
+    </div>
+  );
 
   return (
     <div ref={rootRef} className={`mpr-root mpr-${layout} ${props.className ?? ""}`}>
@@ -687,7 +812,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         <canvas
           ref={canvasRef}
           className="mpr-canvas"
-          style={{ height, background: theme.background }}
+          style={{ height: canvasHeight, background: theme.background }}
           tabIndex={0}
           title="Drag or scroll to move. Click to set the playhead. Space plays; Home returns to the start."
         />
@@ -712,7 +837,12 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
           </button>
           <span className="mpr-position" ref={positionRef} title="Bar and beat" />
           <span className="mpr-spacer" />
-          {soundSelect}
+          {!multi && soundSelect(0)}
+          {multi && (
+            <button className="mpr-icon" onClick={() => setSeparate((v) => !v)} aria-pressed={separate} title="Each part on its own roll" aria-label="Separate parts">
+              <Icon name="lanes" />
+            </button>
+          )}
           <label className="mpr-tempo" title="Tempo">
             <input type="number" min={20} max={400} value={bpm} aria-label="Tempo" onChange={(e) => onBpmChange(parseFloat(e.target.value))} />
             BPM
@@ -739,7 +869,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         <div className="mpr-foot">
           <span className="mpr-title">{meta?.title ?? ""}</span>
           <span className="mpr-spacer" />
-          {soundSelect}
+          {!multi && soundSelect(0)}
           <span className="mpr-meta">{bpm} BPM</span>
           {notShown}
           <button className="mpr-icon" onClick={() => setExpanded(true)} title="Open the full player" aria-label="Open the full player">
@@ -750,12 +880,13 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
 
       {/* Only what needs saying: loading, and errors. How to use the roll is in
           the canvas tooltip. */}
-      {(status !== "ready" || soundStatus !== "ready") && (
-        <div className={"mpr-status" + (status === "error" || soundStatus === "error" ? " mpr-error" : "")}>
+      {layout === "full" && partRows}
+      {(status !== "ready" || soundLoad.status !== "ready") && (
+        <div className={"mpr-status" + (status === "error" || soundLoad.status === "error" ? " mpr-error" : "")}>
           {status === "loading" && "Loading…"}
           {status === "error" && errMsg}
-          {ready && soundStatus === "loading" && `Loading ${sound.label}…`}
-          {ready && soundStatus === "error" && `Couldn't load ${sound.label}. Try again or choose a synth.`}
+          {ready && soundLoad.status === "loading" && `Loading ${soundLabels}…`}
+          {ready && soundLoad.status === "error" && `Couldn't load ${soundLabels}. Try again or choose a synth.`}
         </div>
       )}
       {showWarnings && ready && warnings.length > 0 && (
@@ -768,7 +899,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
           ))}
         </ul>
       )}
-      {sound.kind === "sampled" && <div className="mpr-credit">{SAMPLE_CREDIT}</div>}
+      {partSounds.some((id) => findSound(id).kind === "sampled") && <div className="mpr-credit">{SAMPLE_CREDIT}</div>}
     </div>
   );
 }
@@ -776,7 +907,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
 // ── Icons ──
 // Drawn inline so the player needs no icon font or image files.
 
-type IconName = "play" | "pause" | "start" | "loop" | "minus" | "plus" | "image" | "expand" | "collapse";
+type IconName = "play" | "pause" | "start" | "loop" | "minus" | "plus" | "image" | "expand" | "collapse" | "lanes";
 
 function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
   const solid = name === "play" || name === "pause";
@@ -801,6 +932,7 @@ function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
       {name === "image" && <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="M21 16l-5-5-9 9" /></>}
       {name === "expand" && <path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />}
       {name === "collapse" && <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" />}
+      {name === "lanes" && <><rect x="3" y="4" width="18" height="6" rx="1.5" /><rect x="3" y="14" width="18" height="6" rx="1.5" /></>}
     </svg>
   );
 }
@@ -850,6 +982,16 @@ const CSS = `
 .mpr-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: color-mix(in srgb, var(--mpr-muted) 25%, transparent); pointer-events: none; }
 .mpr-progress > div { height: 100%; width: 0; background: var(--mpr-accent); }
 
+.mpr-parts { display: flex; flex-wrap: wrap; gap: 6px 14px; padding: 8px 14px; border-top: 1px solid var(--mpr-border); }
+.mpr-part { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.mpr-part-off .mpr-part-name, .mpr-part-off .mpr-swatch { opacity: .45; }
+.mpr-swatch { width: 10px; height: 10px; border-radius: 3px; flex: none; }
+.mpr-part-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.mpr-ms { appearance: none; width: 24px; height: 24px; padding: 0; border-radius: 5px; border: 1px solid var(--mpr-border); background: transparent; color: var(--mpr-muted); font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+.mpr-ms:hover { border-color: var(--mpr-muted); }
+.mpr-ms[aria-pressed="true"] { color: var(--mpr-text); border-color: var(--mpr-muted); background: color-mix(in srgb, var(--mpr-muted) 30%, transparent); }
+.mpr-solo[aria-pressed="true"] { color: var(--mpr-accent); border-color: var(--mpr-accent); background: color-mix(in srgb, var(--mpr-accent) 14%, transparent); }
+.mpr-part .mpr-select { height: 26px; font-size: 12px; padding: 0 4px; }
 .mpr-status { padding: 8px 14px; color: var(--mpr-muted); font-size: 12px; border-top: 1px solid var(--mpr-border); }
 .mpr-error { color: #ff8a8a; }
 .mpr-warnings { margin: 0; padding: 8px 14px 10px 32px; color: var(--mpr-muted); font-size: 12px; border-top: 1px solid var(--mpr-border); }

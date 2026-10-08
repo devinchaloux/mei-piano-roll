@@ -46,6 +46,7 @@ interface Row {
   piece: string
   notes: number
   bars: number
+  parts: number
   ms: number
   warnings: string[]
   error: string
@@ -66,12 +67,13 @@ function readOne(version: string, file: string): Row {
       version, piece,
       notes: s.notes.length,
       bars: s.bars.length,
+      parts: s.parts.length,
       ms: Math.round(performance.now() - t0),
       warnings: s.warnings.map((w) => w.code),
       error: '',
     }
   } catch (e) {
-    return { version, piece, notes: 0, bars: 0, ms: Math.round(performance.now() - t0), warnings: [], error: e instanceof Error ? e.message.split('\n')[0] : String(e) }
+    return { version, piece, notes: 0, bars: 0, parts: 0, ms: Math.round(performance.now() - t0), warnings: [], error: e instanceof Error ? e.message.split('\n')[0] : String(e) }
   } finally {
     window.close()
   }
@@ -97,6 +99,7 @@ function report(rows: Row[], excluded: string[]): string {
   lines.push(`| Read | ${rows.length} |`)
   lines.push(`| Read with no warnings | ${clean.length} |`)
   lines.push(`| Read, but no notes found | ${empty.length} |`)
+  lines.push(`| Read, with more than one part | ${rows.filter((r) => r.parts > 1).length} |`)
   lines.push(`| Failed (error) | ${failed.length} |`)
   lines.push(`| Left out (copyright notice in header) | ${excluded.length} |`, '')
   lines.push('## Warnings, by number of files', '', '| Warning | Files |', '|---|---|')
@@ -107,8 +110,8 @@ function report(rows: Row[], excluded: string[]): string {
   lines.push('', '## Failures', '')
   if (!failed.length) lines.push('None.')
   for (const r of failed) lines.push(`- ${r.version}/${r.piece}: ${r.error}`)
-  lines.push('', '## Every file', '', '| Version | File | Notes | Bars | ms | Warnings |', '|---|---|---|---|---|---|')
-  for (const r of rows) lines.push(`| ${r.version.slice(4)} | ${r.piece} | ${r.error ? 'ERROR' : r.notes} | ${r.bars} | ${r.ms} | ${r.warnings.join(', ')} |`)
+  lines.push('', '## Every file', '', '| Version | File | Notes | Bars | Parts | ms | Warnings |', '|---|---|---|---|---|---|---|')
+  for (const r of rows) lines.push(`| ${r.version.slice(4)} | ${r.piece} | ${r.error ? 'ERROR' : r.notes} | ${r.bars} | ${r.parts} | ${r.ms} | ${r.warnings.join(', ')} |`)
   return lines.join('\n') + '\n'
 }
 

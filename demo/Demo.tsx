@@ -69,7 +69,7 @@ export default function Demo() {
           <span className="studio-spacer" />
           {score && (
             <span className="studio-meta">
-              {score.title || fileName} · {score.bars.length} bars · {score.meterCount}/{score.meterUnit}
+              {score.title || fileName} · {score.bars.length} bars{score.parts.length > 1 ? ` · ${score.parts.length} parts` : ''} · {score.meterCount}/{score.meterUnit}
             </span>
           )}
         </nav>
@@ -133,12 +133,13 @@ function ImageMaker({ score, theme, noteColor }: { score: MeiScore; theme: Theme
   const [barNumbers, setBarNumbers] = useState(false)
   const [noteLabels, setNoteLabels] = useState(false)
   const [background, setBackground] = useState(true)
+  const [separateParts, setSeparateParts] = useState(false)
 
   const from = Math.min(Math.max(1, fromBar), barCount)
   const to = Math.min(Math.max(from, toBar), barCount)
   const svg = useMemo(
-    () => rollToSvg(score, { fromBar: from, toBar: to, width, height, keyboard, barNumbers, noteLabels, background, theme, noteColor }),
-    [score, from, to, width, height, keyboard, barNumbers, noteLabels, background, theme, noteColor],
+    () => rollToSvg(score, { fromBar: from, toBar: to, width, height, keyboard, barNumbers, noteLabels, background, theme, noteColor, separateParts }),
+    [score, from, to, width, height, keyboard, barNumbers, noteLabels, background, theme, noteColor, separateParts],
   )
   const name = `${(score.title || 'piano-roll').replace(/[^\w-]+/g, '-').toLowerCase()}-bars-${from}-${to}`
   const num = (v: string, fallback: number) => (Number.isFinite(parseInt(v, 10)) ? parseInt(v, 10) : fallback)
@@ -168,6 +169,7 @@ function ImageMaker({ score, theme, noteColor }: { score: MeiScore; theme: Theme
         {check('Bar numbers', barNumbers, setBarNumbers)}
         {check('Note names', noteLabels, setNoteLabels)}
         {check('Background', background, setBackground, 'Off for a transparent background')}
+        {score.parts.length > 1 && check('Separate parts', separateParts, setSeparateParts, 'Each part on its own roll')}
         <span className="studio-spacer" />
         <button className="studio-button" title="Sharp at any size" onClick={() => downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), `${name}.svg`)}>Save SVG</button>
         <button className="studio-button" onClick={async () => downloadBlob(await svgToPng(svg, width, height, 2), `${name}.png`)}>Save PNG</button>

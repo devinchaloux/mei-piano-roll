@@ -1,11 +1,12 @@
-import type { MeiBar, MeiNote, MeiScore, MeiWarning } from './types'
+import type { MeiBar, MeiNote, MeiPart, MeiScore, MeiWarning } from './types'
 
 /* ===========================================================================
  * The native reader: a small MEI reader with no dependencies.
  *
  * Meant for short, cleanly encoded files. It reads the opening meter, each
- * staff's opening key and the first tempo once, walks every layer of every
- * measure, and turns notes and chords into MeiNote records. What it cannot do
+ * staff's opening key and the first tempo once, groups the staves into parts
+ * (instruments), walks every layer of every measure, and turns notes and chords
+ * into MeiNote records. What it cannot do
  * (ties, repeats, unmarked short bars, mid-piece changes, transposing
  * instruments) it reports as warnings rather than hiding. Files that need those go to the second reader,
  * not built yet (docs/decisions.md).
@@ -147,6 +148,7 @@ function durToBeats(node: Element, scale: number, warn: Warnings): number {
 interface LayerEnv {
   resolve: (el: Element) => Element
   keysig: string | null
+  part: number
   measureBeats: number
   notes: MeiNote[]
   warn: Warnings
@@ -161,7 +163,7 @@ function pushNote(n: Element, start: number, beats: number, env: LayerEnv): void
   if (n.getAttribute('tie') === 'm' || n.getAttribute('tie') === 't') {
     env.warn.add('tie', 'Tied notes play as separate notes.')
   }
-  env.notes.push({ midi, start, dur: beats, name: midiName(midi) })
+  env.notes.push({ midi, start, dur: beats, name: midiName(midi), part: env.part })
 }
 
 function walkLayer(node: Element, ctx: { t: number }, env: LayerEnv, scale: number): void {
@@ -311,6 +313,124 @@ function openingKeys(scoreDef: Element | null, root: Document | Element): { bySt
   return { byStaff, score }
 }
 
+// ── Parts ──
+// A part is one instrument. Most files give each instrument its own staff, but
+// a piano or harp spans two staves under a brace, and a group of staves can
+// carry one name ("Violini" over the first and second violins). So a group is
+// read as one part when it is braced or names an instrument, and its staves
+// don't name different instruments; otherwise each staff is its own part, and
+// an unnamed staff takes the name of the group around it.
+
+function textOf(el: Element | undefined): string {
+  return (el?.textContent ?? '').replace(/\s+/g, ' ').trim()
+}
+
+// MEI 3 names a staff or group in a label attribute; MEI 4 and later in a
+// <label> element.
+function labelOf(def: Element): string {
+  return (def.getAttribute('label') ?? '').trim() || textOf(childrenNamed(def, 'label')[0])
+}
+
+function instrumentOf(def: Element): { instrument?: string; midiProgram?: number } {
+  const d = childrenNamed(def, 'instrDef')[0]
+  if (!d) return {}
+  const name = (d.getAttribute('label') ?? '').trim() || (d.getAttribute('midi.instrname') ?? '').replace(/_/g, ' ').trim()
+  const program = parseInt(d.getAttribute('midi.instrnum') ?? '', 10)
+  return {
+    ...(name ? { instrument: name } : {}),
+    ...(program >= 0 && program <= 127 ? { midiProgram: program } : {}),
+  }
+}
+
+function isOneInstrument(grp: Element): boolean {
+  const staves = childrenNamed(grp, 'staffDef')
+  if (!staves.length || childrenNamed(grp, 'staffGrp').length) return false
+  if (staves.some((d) => childrenNamed(d, 'instrDef').length)) return false
+  const names = new Set(staves.map((d) => labelOf(d).toLowerCase()).filter(Boolean))
+  if (names.size > 1) return false
+  // Notation software often names only a piano's first staff; a name on a
+  // later staff alone names that staff (a viola inside a group of violins).
+  if (names.size === 1 && !labelOf(staves[0])) return false
+  const named = !!nameOfGroup(grp) || childrenNamed(grp, 'instrDef').length > 0
+  return named || grp.getAttribute('symbol') === 'brace'
+}
+
+// A group's name, if it has one. A bare number ("1") numbers the group; it
+// doesn't name an instrument.
+function nameOfGroup(grp: Element): string {
+  const label = labelOf(grp)
+  return /\D/.test(label) ? label : ''
+}
+
+class PartTable {
+  readonly parts: MeiPart[] = []
+  private byStaff = new Map<string, number>()
+
+  /** Reads the opening score definition's staves and groups, in score order. */
+  constructor(scoreDef: Element | null) {
+    if (scoreDef) this.visit(scoreDef)
+  }
+
+  /** The part a staff belongs to; a staff the definitions never mention gets a part of its own. */
+  partOf(staffN: string): number {
+    const known = this.byStaff.get(staffN)
+    if (known !== undefined) return known
+    return this.add([staffN], `Staff ${staffN}`, {})
+  }
+
+  private visit(parent: Element, groupLabel = ''): void {
+    for (const child of Array.from(parent.children)) {
+      if (child.localName === 'staffDef') this.addStaff(child, groupLabel)
+      else if (child.localName === 'staffGrp') {
+        if (isOneInstrument(child)) this.addGroup(child)
+        else this.visit(child, nameOfGroup(child) || groupLabel)
+      }
+    }
+  }
+
+  private addStaff(def: Element, groupLabel: string): void {
+    const n = def.getAttribute('n') ?? ''
+    if (this.byStaff.has(n)) return
+    const inst = instrumentOf(def)
+    const label = labelOf(def) || inst.instrument || textOf(childrenNamed(def, 'labelAbbr')[0]) || groupLabel
+    this.add([n], label || `Staff ${n}`, { instrument: inst.instrument ?? (label || undefined), midiProgram: inst.midiProgram })
+  }
+
+  private addGroup(grp: Element): void {
+    const staves = childrenNamed(grp, 'staffDef').map((d) => d.getAttribute('n') ?? '').filter((n) => !this.byStaff.has(n))
+    if (!staves.length) return
+    const inst = instrumentOf(grp)
+    const staffLabel = childrenNamed(grp, 'staffDef').map(labelOf).find(Boolean)
+    const label = inst.instrument || staffLabel || nameOfGroup(grp)
+    const fallback = staves.length > 1 ? `Staves ${staves[0]}–${staves[staves.length - 1]}` : `Staff ${staves[0]}`
+    this.add(staves, label || fallback, { instrument: label || undefined, midiProgram: inst.midiProgram })
+  }
+
+  private add(staves: string[], label: string, inst: { instrument?: string; midiProgram?: number }): number {
+    const part: MeiPart = { label, staves }
+    if (inst.instrument) part.instrument = inst.instrument
+    if (inst.midiProgram !== undefined) part.midiProgram = inst.midiProgram
+    this.parts.push(part)
+    for (const n of staves) this.byStaff.set(n, this.parts.length - 1)
+    return this.parts.length - 1
+  }
+}
+
+// Parts with no notes (an empty staff, a staff of rests) are dropped, so every
+// part a player lists can be heard. Notes are renumbered to match.
+function keepSoundingParts(parts: MeiPart[], notes: MeiNote[]): MeiPart[] {
+  const used = new Set(notes.map((n) => n.part))
+  const renumber = new Map<number, number>()
+  const kept: MeiPart[] = []
+  parts.forEach((p, i) => {
+    if (!used.has(i)) return
+    renumber.set(i, kept.length)
+    kept.push(p)
+  })
+  for (const n of notes) n.part = renumber.get(n.part)!
+  return kept
+}
+
 // ── Whole-file checks ──
 // Things the reader knowingly gets wrong, detected up front so they are reported
 // even when they don't change a single note.
@@ -369,6 +489,7 @@ export function parseNative(xmlText: string): MeiScore {
   const staffDef = firstDeep(music, 'staffDef')
   const meter = openingMeter(scoreDef, doc)
   const keys = openingKeys(scoreDef, music)
+  const partTable = new PartTable(scoreDef)
   const meterCount = meter.count
   const meterUnit = meter.unit
   const measureBeats = meterCount * (4 / meterUnit)
@@ -393,9 +514,10 @@ export function parseNative(xmlText: string): MeiScore {
     let measureMax = measureStart
     for (const staff of allDeep(resolve(measure), 'staff').map(resolve)) {
       const keysig = keys.byStaff.get(staff.getAttribute('n') || '') ?? keys.score
+      const part = partTable.partOf(staff.getAttribute('n') || '')
       for (const layer of allDeep(staff, 'layer').map(resolve)) {
         const ctx = { t: measureStart }
-        walkLayer(layer, ctx, { resolve, keysig, measureBeats, notes, warn }, 1)
+        walkLayer(layer, ctx, { resolve, keysig, part, measureBeats, notes, warn }, 1)
         if (ctx.t > measureMax) measureMax = ctx.t
       }
     }
@@ -427,6 +549,7 @@ export function parseNative(xmlText: string): MeiScore {
     measureBeats,
     bars,
     totalBeats: Math.max(maxEnd, measureStart),
+    parts: keepSoundingParts(partTable.parts, notes),
     notes,
     warnings: warn.list(),
   }

@@ -1,6 +1,8 @@
 import type { MeiScore } from '../mei/types'
 import { midiName, isBlackKey } from '../mei/parseNative'
 import { resolveTheme, shade, type RollTheme, type ThemeName } from '../roll/themes'
+import { partColors } from '../roll/noteColors'
+import { layoutLanes } from '../roll/lanes'
 
 /* ===========================================================================
  * Still images of the roll, as SVG.
@@ -28,8 +30,14 @@ export interface RollImageOptions {
   /** Pitch names on notes wide enough to hold them. Default false. */
   noteLabels?: boolean
   theme?: ThemeName | RollTheme
-  /** Note color; overrides the theme's. */
+  /** Note color; overrides the theme's. With several parts, the first part's. */
   noteColor?: string
+  /** One color per part, in the order of `score.parts`; overrides `noteColor`. */
+  partColors?: string[]
+  /** Each part on its own roll, labeled, instead of all on one. Default false. */
+  separateParts?: boolean
+  /** Parts drawn faint, as the player draws muted parts. */
+  fadedParts?: number[]
   /** False leaves the background transparent. Default true. */
   background?: boolean
   /** Empty pitch rows above and below the notes. Default 1. */
@@ -42,10 +50,11 @@ const r2 = (n: number) => Math.round(n * 100) / 100
 export function rollToSvg(score: MeiScore, options: RollImageOptions = {}): string {
   const o = {
     width: 1200, height: 400, keyboard: true, barNumbers: false, grid: true, noteLabels: false,
-    background: true, pitchPadding: 1, ...options,
+    background: true, pitchPadding: 1, separateParts: false, ...options,
   }
   const theme = resolveTheme(o.theme)
-  const noteColor = o.noteColor ?? theme.note
+  const colors = o.partColors ?? partColors(score.parts.length, theme, o.noteColor ?? theme.note)
+  const faded = new Set(o.fadedParts ?? [])
 
   // ── Which stretch of music ──
   const bars = score.bars.length ? score.bars : [{ start: 0, label: '1' }]
@@ -57,56 +66,76 @@ export function rollToSvg(score: MeiScore, options: RollImageOptions = {}): stri
   const notes = score.notes.filter((n) => n.start < endBeat - 1e-6 && n.start + n.dur > startBeat + 1e-6)
 
   // ── Geometry ──
-  let lo = 60, hi = 72
-  if (notes.length) {
-    lo = Math.min(...notes.map((n) => n.midi)) - o.pitchPadding
-    hi = Math.max(...notes.map((n) => n.midi)) + o.pitchPadding
-  }
   const keyW = o.keyboard ? Math.max(24, Math.min(60, Math.round(o.width * 0.04))) : 0
   const rulerH = o.barNumbers ? 22 : 0
-  const rows = hi - lo + 1
-  const rowH = (o.height - rulerH) / rows
+  const lanes = layoutLanes(notes, { separate: o.separateParts, top: rulerH, height: o.height - rulerH, pitchPadding: o.pitchPadding })
+  const labelLanes = lanes.length > 1
   const px = (o.width - keyW) / span
   const x = (beat: number) => keyW + (beat - startBeat) * px
-  const y = (midi: number) => rulerH + (hi - midi) * rowH
+  const font = 'font-family="ui-monospace, Menlo, Consolas, monospace"'
 
   const out: string[] = []
   out.push(`<svg xmlns="http://www.w3.org/2000/svg" width="${o.width}" height="${o.height}" viewBox="0 0 ${o.width} ${o.height}" role="img">`)
   out.push(`<title>${esc(score.title || 'Piano roll')}</title>`)
   if (o.background) out.push(`<rect width="${o.width}" height="${o.height}" fill="${theme.background}"/>`)
 
-  // Pitch rows: black-key rows a shade darker, as in a DAW.
-  for (let m = lo; m <= hi; m++) {
-    const fill = isBlackKey(m) ? theme.rowBlack : theme.rowWhite
-    if (!o.background && fill === theme.background) continue
-    out.push(`<rect x="${keyW}" y="${r2(y(m))}" width="${o.width - keyW}" height="${r2(rowH)}" fill="${fill}"/>`)
-  }
+  for (const lane of lanes) {
+    const rowH = lane.height / (lane.hi - lane.lo + 1)
+    const y = (midi: number) => lane.top + (lane.hi - midi) * rowH
+    const bottom = lane.top + lane.height
 
-  // ── Grid: a line per beat, counted from each bar's start; stronger at bar lines ──
-  if (o.grid) {
-    for (let i = first - 1; i < last; i++) {
-      const barEnd = i + 1 < bars.length ? bars[i + 1].start : score.totalBeats
-      for (let b = bars[i].start; b < barEnd - 1e-6; b += 1) {
-        const isBar = b === bars[i].start
-        const xx = Math.round(x(b)) + 0.5
-        out.push(`<line x1="${xx}" y1="${rulerH}" x2="${xx}" y2="${o.height}" stroke="${isBar ? theme.gridBar : theme.gridBeat}" stroke-width="${isBar ? 1.5 : 1}"/>`)
+    // Pitch rows: black-key rows a shade darker, as in a DAW.
+    for (let m = lane.lo; m <= lane.hi; m++) {
+      const fill = isBlackKey(m) ? theme.rowBlack : theme.rowWhite
+      if (!o.background && fill === theme.background) continue
+      out.push(`<rect x="${keyW}" y="${r2(y(m))}" width="${o.width - keyW}" height="${r2(rowH)}" fill="${fill}"/>`)
+    }
+
+    // ── Grid: a line per beat, counted from each bar's start; stronger at bar lines ──
+    if (o.grid) {
+      for (let i = first - 1; i < last; i++) {
+        const barEnd = i + 1 < bars.length ? bars[i + 1].start : score.totalBeats
+        for (let b = bars[i].start; b < barEnd - 1e-6; b += 1) {
+          const isBar = b === bars[i].start
+          const xx = Math.round(x(b)) + 0.5
+          out.push(`<line x1="${xx}" y1="${r2(lane.top)}" x2="${xx}" y2="${r2(bottom)}" stroke="${isBar ? theme.gridBar : theme.gridBeat}" stroke-width="${isBar ? 1.5 : 1}"/>`)
+        }
       }
     }
-  }
 
-  // ── Notes, clipped to the chosen bars ──
-  const stroke = shade(noteColor, -0.35)
-  const fontSize = Math.max(8, Math.min(12, rowH * 0.6))
-  for (const n of notes) {
-    const s = Math.max(n.start, startBeat)
-    const e = Math.min(n.start + n.dur, endBeat)
-    const nx = x(s) + 1
-    const nw = Math.max(2, (e - s) * px - 2)
-    const ny = y(n.midi) + 1
-    const nh = Math.max(1, rowH - 2)
-    out.push(`<rect x="${r2(nx)}" y="${r2(ny)}" width="${r2(nw)}" height="${r2(nh)}" rx="${r2(Math.min(3, nh / 2))}" fill="${noteColor}" stroke="${stroke}" stroke-width="1"/>`)
-    if (o.noteLabels && nw > 24 && rowH > 12) {
-      out.push(`<text x="${r2(nx + 4)}" y="${r2(ny + nh / 2)}" dominant-baseline="central" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="${r2(fontSize)}" fill="${theme.noteText}">${n.name}</text>`)
+    // ── Notes, clipped to the chosen bars ──
+    const fontSize = Math.max(8, Math.min(12, rowH * 0.6))
+    for (const n of notes) {
+      if (!lane.parts.includes(n.part)) continue
+      const color = colors[n.part] ?? colors[0] ?? theme.note
+      const s = Math.max(n.start, startBeat)
+      const e = Math.min(n.start + n.dur, endBeat)
+      const nx = x(s) + 1
+      const nw = Math.max(2, (e - s) * px - 2)
+      const ny = y(n.midi) + 1
+      const nh = Math.max(1, rowH - 2)
+      const opacity = faded.has(n.part) ? ' opacity="0.3"' : ''
+      out.push(`<rect x="${r2(nx)}" y="${r2(ny)}" width="${r2(nw)}" height="${r2(nh)}" rx="${r2(Math.min(3, nh / 2))}" fill="${color}" stroke="${shade(color, -0.35)}" stroke-width="1"${opacity}/>`)
+      if (o.noteLabels && nw > 24 && rowH > 12) {
+        out.push(`<text x="${r2(nx + 4)}" y="${r2(ny + nh / 2)}" dominant-baseline="central" ${font} font-size="${r2(fontSize)}" fill="${theme.noteText}"${opacity}>${n.name}</text>`)
+      }
+    }
+
+    // ── Part name, top left of its lane ──
+    if (labelLanes) {
+      const part = score.parts[lane.parts[0]]
+      if (part) out.push(`<text x="${keyW + 6}" y="${r2(lane.top + 11)}" dominant-baseline="central" ${font} font-size="11" fill="${theme.text}">${esc(part.label)}</text>`)
+    }
+
+    // ── Keyboard ──
+    if (o.keyboard) {
+      out.push(`<rect x="0" y="${r2(lane.top)}" width="${keyW}" height="${r2(lane.height)}" fill="${theme.keyWhite}"/>`)
+      for (let m = lane.lo; m <= lane.hi; m++) {
+        if (isBlackKey(m)) out.push(`<rect x="0" y="${r2(y(m))}" width="${r2(keyW * 0.68)}" height="${r2(rowH - 1)}" fill="${theme.keyBlack}"/>`)
+        if (m % 12 === 0 && rowH > 9) {
+          out.push(`<text x="4" y="${r2(y(m) + rowH / 2)}" dominant-baseline="central" ${font} font-size="${r2(Math.min(10, rowH * 0.8))}" fill="${theme.text}">${midiName(m)}</text>`)
+        }
+      }
     }
   }
 
@@ -114,22 +143,11 @@ export function rollToSvg(score: MeiScore, options: RollImageOptions = {}): stri
   if (o.barNumbers) {
     out.push(`<rect width="${o.width}" height="${rulerH}" fill="${o.background ? theme.background : 'none'}"/>`)
     for (let i = first - 1; i < last; i++) {
-      out.push(`<text x="${r2(x(bars[i].start) + 4)}" y="${rulerH / 2}" dominant-baseline="central" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="11" fill="${theme.text}">${esc(bars[i].label)}</text>`)
+      out.push(`<text x="${r2(x(bars[i].start) + 4)}" y="${rulerH / 2}" dominant-baseline="central" ${font} font-size="11" fill="${theme.text}">${esc(bars[i].label)}</text>`)
     }
   }
 
-  // ── Keyboard ──
-  if (o.keyboard) {
-    out.push(`<rect x="0" y="${rulerH}" width="${keyW}" height="${o.height - rulerH}" fill="${theme.keyWhite}"/>`)
-    for (let m = lo; m <= hi; m++) {
-      if (isBlackKey(m)) out.push(`<rect x="0" y="${r2(y(m))}" width="${r2(keyW * 0.68)}" height="${r2(rowH - 1)}" fill="${theme.keyBlack}"/>`)
-      if (m % 12 === 0 && rowH > 9) {
-        out.push(`<text x="4" y="${r2(y(m) + rowH / 2)}" dominant-baseline="central" font-family="ui-monospace, Menlo, Consolas, monospace" font-size="${r2(Math.min(10, rowH * 0.8))}" fill="${theme.text}">${midiName(m)}</text>`)
-      }
-    }
-    out.push(`<line x1="${keyW + 0.5}" y1="0" x2="${keyW + 0.5}" y2="${o.height}" stroke="${theme.gridBar}"/>`)
-  }
-
+  if (o.keyboard) out.push(`<line x1="${keyW + 0.5}" y1="0" x2="${keyW + 0.5}" y2="${o.height}" stroke="${theme.gridBar}"/>`)
   out.push('</svg>')
   return out.join('\n')
 }

@@ -38,3 +38,18 @@ export function isLightTheme(theme: RollTheme): boolean {
 export function noteColorFor(c: NoteColor, theme: RollTheme): string {
   return isLightTheme(theme) ? c.onLight : c.color
 }
+
+// ── One color per part ──
+// The first part takes the note color, so a one-part file looks as it always
+// has. The others follow in an order that keeps neighbors far apart in hue,
+// in the strength that suits the theme.
+
+const PART_ORDER = ['Sky', 'Amber', 'Lime', 'Violet', 'Cyan', 'Rose', 'Magenta', 'Neutral']
+
+/** Colors for `count` parts: `first` for the first part, quick-pick colors after it. */
+export function partColors(count: number, theme: RollTheme, first: string): string[] {
+  const rest = PART_ORDER
+    .map((name) => noteColorFor(NOTE_COLORS.find((c) => c.name === name)!, theme))
+    .filter((c) => c.toLowerCase() !== first.toLowerCase())
+  return Array.from({ length: Math.max(0, count) }, (_, i) => (i === 0 ? first : rest[(i - 1) % rest.length]))
+}

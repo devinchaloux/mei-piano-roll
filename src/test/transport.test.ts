@@ -111,3 +111,14 @@ describe('Transport', () => {
     expect(played.filter((p) => p.midi === 60).length).toBe(2)
   })
 })
+
+describe('Transport: parts', () => {
+  it("hands each note's part to the engine, 0 when a note has none", () => {
+    const parts: number[] = []
+    const t = new Transport({ now: () => 0, play: (_m, _w, _d, part) => { parts.push(part) }, stopAll: () => {} }, { lookahead: 1, startDelay: 0 })
+    t.setScore([{ midi: 60, start: 0, dur: 1, part: 2 }, { midi: 62, start: 0.5, dur: 1 }], 2)
+    t.play()
+    t.pause()
+    expect(parts).toEqual([2, 0])
+  })
+})
