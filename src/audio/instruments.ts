@@ -18,12 +18,15 @@ const BY_PROGRAM: [number, number, string][] = [
   [15, 15, 'guitar'], // dulcimer
   [16, 23, 'organ'], // organs, accordion, harmonica
   [24, 31, 'guitar'],
-  [32, 32, 'cello'], // acoustic bass
+  [32, 32, 'double-bass'], // acoustic bass
   [33, 38, 'synth-bass'], // electric basses, slap bass, synth bass 1
   [39, 39, 'acid-bass'], // synth bass 2
-  [40, 41, 'violin'], // violin, viola
-  [42, 43, 'cello'], // cello, contrabass
-  [44, 45, 'strings'], // tremolo, pizzicato
+  [40, 40, 'violin'],
+  [41, 41, 'viola'],
+  [42, 42, 'cello'],
+  [43, 43, 'double-bass'],
+  [44, 44, 'strings'], // tremolo strings
+  [45, 45, 'pizzicato'],
   [46, 46, 'guitar'], // harp
   [48, 51, 'strings'], // string and synth string ensembles
   [52, 54, 'choir'],
@@ -55,9 +58,11 @@ const BY_PROGRAM: [number, number, string][] = [
 const BY_NAME: [RegExp, string][] = [
   [/electric piano|e-piano|rhodes|wurlitzer/, 'electric-piano'],
   [/piano|klavier|cembalo|harpsichord|clavier/, 'piano'],
-  [/contrabass|double bass|kontrabass|contrabbass/, 'cello'],
+  [/contrabass|double bass|kontrabass|contrabbass/, 'double-bass'],
   [/violoncell|cello/, 'cello'],
-  [/viol(a|e|in|ino|ini|ine|en)?(?![a-z])|fiddle|geige/, 'violin'],
+  [/pizz/, 'pizzicato'],
+  [/viol(a|e)(?![a-z])|bratsche/, 'viola'],
+  [/viol(in|ino|ini|ine|en)?(?![a-z])|fiddle|geige/, 'violin'],
   [/strings|streicher|archi(?![a-z])/, 'strings'],
   [/piccolo|flute|flauto|flauti|fl(ö|oe)te|recorder|blockfl/, 'flute'],
   [/clarinet|klarinette|oboe|oboi|hautbois|bassoon|fagott|english horn|cor anglais/, 'clarinet'],

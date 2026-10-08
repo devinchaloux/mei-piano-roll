@@ -11,9 +11,11 @@ lists anything in the file it could not show faithfully.
 On the MEI project's 617 sample files it reads everything without crashing, and
 144 read with nothing left out; the rest report a gap (repeats, mid-piece
 changes, notes without a length, a few ties it can't follow). Tied notes sound
-once, as one long note, and grace notes play just before their beat. A file with
+once, as one long note, grace notes play just before their beat, and measured
+tremolos play as the repeated notes they stand for. A file with
 several instruments shows each in its own color, on one roll or one lane per
-part, with mute, solo and a sound for each. The second reader, for everything
+part, with mute, solo and a sound for each, starting from the instruments the
+file names. The second reader, for everything
 else, is not built yet. Nothing is published to npm yet.
 
 ## Try it

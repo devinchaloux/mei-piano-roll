@@ -123,7 +123,12 @@ describe('soundForPart', () => {
     expect(soundForPart({ instrument: 'Violoncello' })).toBe('cello')
     expect(soundForPart({ instrument: 'Violini' })).toBe('violin')
     expect(soundForPart({ instrument: 'Violine2' })).toBe('violin')
-    expect(soundForPart({ instrument: 'Viole' })).toBe('violin')
+    expect(soundForPart({ instrument: 'Viole' })).toBe('viola')
+    expect(soundForPart({ instrument: 'Viola' })).toBe('viola')
+    expect(soundForPart({ instrument: 'Bratsche' })).toBe('viola')
+    expect(soundForPart({ instrument: 'Violin I' })).toBe('violin')
+    expect(soundForPart({ instrument: 'Kontrabass' })).toBe('double-bass')
+    expect(soundForPart({ instrument: 'Violini pizz.' })).toBe('pizzicato')
     expect(soundForPart({ instrument: 'Violone' })).toBeNull()
     expect(soundForPart({ instrument: 'Flauti' })).toBe('flute')
     expect(soundForPart({ instrument: 'Klarinette in B' })).toBe('clarinet')
@@ -192,5 +197,36 @@ describe('rollToSvg with parts', () => {
     expect(svg).toContain('>Cello</text>')
     expect((svg.match(/opacity="0.3"/g) ?? []).length).toBe(1)
     expect(rollToSvg(s)).not.toContain('>Flute</text>')
+  })
+})
+
+describe('parseNative: instruments named in the header', () => {
+  const quartet = (perfRes: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<mei xmlns="http://www.music-encoding.org/ns/mei" meiversion="5.1">
+  <meiHead><fileDesc><titleStmt><title>Quartet<titlePart>op. 1</titlePart></title></titleStmt></fileDesc>
+    <workList><work><perfMedium><perfResList>${perfRes}</perfResList></perfMedium></work></workList></meiHead>
+  <music><body><mdiv><score>
+    <scoreDef meter.count="4" meter.unit="4"><staffGrp symbol="bracket">
+      <staffDef n="1" lines="5"/><staffDef n="2" lines="5"/><staffDef n="3" lines="5"/><staffDef n="4" lines="5"/>
+    </staffGrp></scoreDef>
+    <section><measure n="1">
+      ${[1, 2, 3, 4].map((n) => `<staff n="${n}"><layer><note pname="c" oct="${6 - n}" dur="1"/></layer></staff>`).join('')}
+    </measure></section>
+  </score></mdiv></body></music>
+</mei>`
+
+  it('names unnamed staves from a performer list numbered like them', () => {
+    const s = parseNative(quartet('<perfRes n="1">Violin I</perfRes><perfRes n="2">Violin II</perfRes><perfRes n="3">Viola</perfRes><perfRes n="4">Violoncello</perfRes>'))
+    expect(s.parts.map((p) => p.label)).toEqual(['Violin I', 'Violin II', 'Viola', 'Violoncello'])
+    expect(s.parts.map((p) => soundForPart(p))).toEqual(['violin', 'violin', 'viola', 'cello'])
+  })
+
+  it('ignores a performer list of another shape', () => {
+    const s = parseNative(quartet('<perfRes>Strings</perfRes>'))
+    expect(s.parts.map((p) => p.label)).toEqual(['Staff 1', 'Staff 2', 'Staff 3', 'Staff 4'])
+  })
+
+  it("reads a title's own words, without its subtitles run into them", () => {
+    expect(parseNative(quartet('')).title).toBe('Quartet')
   })
 })
