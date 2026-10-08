@@ -151,3 +151,6 @@ vite.config.ts.timestamp-*
 # MEI sample files for the stress test: downloaded by `npm run samples`, never
 # committed (docs/decisions.md, 2026-10-07)
 fixtures/
+
+# The demo site build (npm run build:demo), deployed by Vercel
+dist-demo/

@@ -169,6 +169,16 @@ and need a browser.
 **Why.** Pictures made from the real files can't drift from them, and SVG stays
 sharp at any size.
 
+### 2026-10-08: the demo is hosted on Vercel, behind sign-in for now
+
+**Choice.** Vercel builds the demo page (`npm run build:demo`, settings in
+`vercel.json`): `main` deploys it and every pull request gets a preview link.
+Deployments require signing in to the project's Vercel account until the
+project goes public.
+
+**Why.** Trying the roll, and hearing the sampled sounds, should not require
+installing anything; previews let a change be heard before it merges.
+
 ## Open questions
 
 | Question | Options |
