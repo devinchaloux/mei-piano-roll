@@ -209,7 +209,14 @@ hands notes to the sound engine about a tenth of a second before they sound,
 on a 25 ms timer. Play, pause, stop, seek, tempo and loop are its methods, and
 it is unit-tested with a fake clock. The player tracks the listener's intent
 separately, so pressing play again while a sound downloads cancels instead of
-starting a second playback.
+starting a second playback, and picking another sound mid-download plays the
+newest choice.
+
+Switching sound cuts the old one off at once: each sampled instrument has its
+own output level, faded to silence in about 20 ms when it is left, rather than
+ringing on through its release under the new sound. A synth note is
+disconnected as well as stopped when playback halts, because some browsers
+refuse a second stop() on a sound that already has one scheduled.
 
 **Rejected.** Scheduling the whole piece when play is pressed, as before. The
 sample library queues notes scheduled far ahead and its stop() leaves that

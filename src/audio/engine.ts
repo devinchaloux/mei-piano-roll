@@ -22,8 +22,9 @@ export class SoundEngine {
   // Sounding synth notes: a way to stop each, and when it ends on its own.
   private voices: Array<{ stop: () => void; end: number }> = []
   // Cached per instrument, so switching back and forth downloads nothing twice.
-  private instruments = new Map<string, Promise<SampledInstrument>>()
-  private current: SampledInstrument | null = null
+  // Each has its own output level, so the one being left can be silenced at once.
+  private instruments = new Map<string, Promise<{ inst: SampledInstrument; out: GainNode }>>()
+  private current: { inst: SampledInstrument; out: GainNode } | null = null
 
   constructor(soundId?: string) {
     const AC: typeof AudioContext =
@@ -50,26 +51,35 @@ export class SoundEngine {
    */
   async use(soundId: string): Promise<void> {
     this.sound = findSound(soundId)
-    if (this.sound.kind === 'synth') {
+    // The instrument being left fades out over a few milliseconds instead of
+    // ringing on through its release while the new sound starts.
+    if (this.current) {
+      const now = this.ctx.currentTime
+      this.current.out.gain.setTargetAtTime(0, now, 0.01)
       this.current = null
-      return
     }
+    if (this.sound.kind === 'synth') return
     const wanted = this.sound
-    const inst = await this.loadInstrument(wanted.instrument)
+    const loaded = await this.loadInstrument(wanted.instrument)
     // Another sound may have been picked while this one downloaded.
-    if (this.sound === wanted) this.current = inst
+    if (this.sound !== wanted) return
+    loaded.out.gain.cancelScheduledValues(this.ctx.currentTime)
+    loaded.out.gain.setValueAtTime(1, this.ctx.currentTime)
+    this.current = loaded
   }
 
-  private loadInstrument(name: string): Promise<SampledInstrument> {
+  private loadInstrument(name: string): Promise<{ inst: SampledInstrument; out: GainNode }> {
     let p = this.instruments.get(name)
     if (!p) {
       p = (async () => {
         // Imported here, not at the top, so pages that only use the synths never
         // download the sample library's code either.
         const { Soundfont } = await import('smplr')
-        const inst = Soundfont(this.ctx, { instrument: name, kit: 'FluidR3_GM', destination: this.sampleOut }) as unknown as SampledInstrument
+        const out = this.ctx.createGain()
+        out.connect(this.sampleOut)
+        const inst = Soundfont(this.ctx, { instrument: name, kit: 'FluidR3_GM', destination: out }) as unknown as SampledInstrument
         await inst.load
-        return inst
+        return { inst, out }
       })()
       // A failed download is forgotten, so choosing the sound again retries it.
       p.catch(() => this.instruments.delete(name))
@@ -85,7 +95,7 @@ export class SoundEngine {
       const now = this.ctx.currentTime
       let t0 = when, d = duration
       if (t0 < now) { d -= now - t0; t0 = now }
-      if (d > 0.001) this.current.start({ note: midi, time: t0, duration: d })
+      if (d > 0.001) this.current.inst.start({ note: midi, time: t0, duration: d })
       return
     }
     // Forget notes that have finished, so the list stays short in long pieces.
@@ -98,7 +108,7 @@ export class SoundEngine {
   stopAll(): void {
     for (const v of this.voices) v.stop()
     this.voices = []
-    this.current?.stop()
+    this.current?.inst.stop()
   }
 
   close(): void {

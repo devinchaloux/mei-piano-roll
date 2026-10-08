@@ -184,19 +184,21 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     return engineRef.current;
   }
   // A sampled sound has to download before it can play; a synth is ready now.
-  async function prepareSound(id: string): Promise<boolean> {
+  // "superseded" means another sound was picked while this one downloaded.
+  async function prepareSound(id: string): Promise<"ready" | "superseded" | "failed"> {
     const engine = ensureEngine();
     soundReadyRef.current = false;
     if (findSound(id).kind === "sampled") setSoundStatus("loading");
     try {
       await engine.use(id);
-      if (soundIdRef.current !== id) return false; // another sound was picked meanwhile
+      if (soundIdRef.current !== id) return "superseded";
       soundReadyRef.current = true;
       setSoundStatus("ready");
-      return true;
+      return "ready";
     } catch {
-      if (soundIdRef.current === id) setSoundStatus("error");
-      return false;
+      if (soundIdRef.current !== id) return "superseded";
+      setSoundStatus("error");
+      return "failed";
     }
   }
   // Switching sound keeps the playhead: the old sound is silenced at once, and
@@ -206,10 +208,9 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     setSoundId(id);
     const transport = transportRef.current;
     if (transport?.playing) transport.pause();
-    const ok = await prepareSound(id);
-    if (soundIdRef.current !== id) return;
-    if (!wantPlayRef.current) return;
-    if (ok) {
+    const result = await prepareSound(id);
+    if (result === "superseded" || !wantPlayRef.current) return;
+    if (result === "ready") {
       transportRef.current?.play();
       startLoopIfNeeded();
     } else {
@@ -230,9 +231,12 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     const engine = ensureEngine();
     engine.ctx.resume();
     if (engine.soundId !== soundIdRef.current || !soundReadyRef.current) {
-      const ok = await prepareSound(soundIdRef.current);
+      const result = await prepareSound(soundIdRef.current);
       if (token !== startTokenRef.current) return; // paused, or played again, meanwhile
-      if (!ok) { wantPlayRef.current = false; setPlaying(false); return; }
+      // A newer sound was picked while this one downloaded: its own change
+      // handler starts playback when it is ready, since the listener still wants it.
+      if (result === "superseded") return;
+      if (result === "failed") { wantPlayRef.current = false; setPlaying(false); return; }
     }
     if (token !== startTokenRef.current || !wantPlayRef.current) return;
     transportRef.current!.play();
