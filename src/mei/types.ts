@@ -53,7 +53,10 @@ export interface MeiBar {
 
 export interface MeiScore {
   title: string
+  /** The composer the file names, else "". Several are joined with commas. */
   composer: string
+  /** The performer or band the file names (a role of artist or performer), else "". */
+  artist: string
   bpm: number
   meterCount: number
   meterUnit: number
