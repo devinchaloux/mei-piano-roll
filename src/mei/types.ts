@@ -11,6 +11,23 @@ export interface MeiNote {
   dur: number
   /** Pitch name with octave, e.g. "C#4". */
   name: string
+  /** Which instrument plays it: an index into `MeiScore.parts`. */
+  part: number
+}
+
+/**
+ * One instrument: a staff, or a group of staves the file presents as one
+ * instrument (a piano's two staves under a brace, or a group with one name).
+ */
+export interface MeiPart {
+  /** The name the file gives, else "Staff 1" or "Staves 1–2". */
+  label: string
+  /** The staves it covers, by their `n`. */
+  staves: string[]
+  /** The instrument the file names, if any, in its own words (`<instrDef>` or the label). */
+  instrument?: string
+  /** The instrument's General MIDI program (0–127), when an `<instrDef>` gives one. */
+  midiProgram?: number
 }
 
 /**
@@ -45,6 +62,8 @@ export interface MeiScore {
   /** Every bar, in order. Pickups and other short bars keep their real length. */
   bars: MeiBar[]
   totalBeats: number
+  /** Every part that has notes, in score order. A file with one staff has one part. */
+  parts: MeiPart[]
   notes: MeiNote[]
   warnings: MeiWarning[]
 }

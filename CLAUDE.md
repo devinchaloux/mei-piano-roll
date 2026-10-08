@@ -4,9 +4,10 @@ Instructions for Claude Code in this repository. They apply to anyone working
 on mei-piano-roll with Claude; the maintainer's own session instructions load
 from a private file through the import at the end.
 
-**Current state (2026-10-07):** the native reader and the player work, with
-unit tests, a demo page (`npm run dev`) and a stress test over the MEI
-project's sample files (`npm run stress`). The second reader is not built.
+**Current state (2026-10-08):** the native reader and the player work,
+several instruments included, with unit tests, a demo page (`npm run dev`) and
+a stress test over the MEI project's sample files (`npm run stress`). The
+second reader is not built.
 `docs/decisions.md` lists what is decided and what is open.
 
 ---

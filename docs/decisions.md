@@ -1,9 +1,9 @@
 # Decisions
 
-**Status (2026-10-07):** the native reader works, and the player has a sound
-picker, color themes and image export. **Next action:** several instruments in
-one roll (color by part, or separate rolls), then annotations, then the second
-reader (Verovio) for any MEI file.
+**Status (2026-10-08):** the native reader works, and the player has a sound
+picker, color themes, image export and several instruments in one roll.
+**Next action:** annotations, then the second reader (Verovio) for any MEI
+file.
 
 Each decision gets: date, the choice, the alternatives rejected, and why, so it
 isn't re-litigated later. Entries are binding until a later entry reverses
@@ -244,6 +244,60 @@ A separate Stop button: back to start and pause cover it.
 **Why.** The roll is the point, so the controls sit under it, as in a DAW's
 transport. Essays need the music without the machinery; the studio page is
 where the machinery lives.
+
+### 2026-10-08: several instruments in one roll
+
+**Choice.** Every note now carries a `part`, an index into the score's new
+`parts` list (`src/mei/types.ts`). A part is one instrument:
+
+- **What counts as a part.** Each staff is its own part, except that a staff
+  group is read as one part when it is braced or names an instrument (a label,
+  or an `<instrDef>`), and its staves don't name different instruments. A
+  piano's two braced staves are one part; a bracket named "Violini" over two
+  unnamed staves is one part. A name on a later staff alone (a viola staff
+  named inside a group of violins) names only that staff, and the unnamed
+  staves take the group's name. A group label that is a bare number doesn't
+  count as a name. Parts with no notes are dropped, so every part listed can
+  be heard.
+- **Colors.** The first part takes the note color, so a one-part file looks
+  as before; the others follow from the quick-pick colors, in an order that
+  keeps neighbors apart, in the strength that suits the theme. `partColors`
+  overrides them.
+- **One roll or lanes.** All parts share one roll by default. A toggle gives
+  each part its own lane, fitted to its own pitch range, labeled, and the
+  player grows taller rather than squeeze a lane below 56 px. The canvas and
+  `rollToSvg` both lay out through `src/roll/lanes.ts`, so a saved image
+  matches the screen.
+- **Mute, solo and a sound per part.** Each part has its own audio channel.
+  Mute and solo set its level, so they act at once, even on notes already
+  sounding; a muted part stays on the roll, faded. Solo plays only soloed
+  parts, and a muted part stays silent either way. Each part has its own copy
+  of a sampled instrument, so switching one part's sound never cuts another.
+  The overall level comes down as parts are added (1/√n), so a full score
+  doesn't clip.
+- **Starting sounds.** A part starts with the nearest sound to the instrument
+  the file names: by General MIDI program when an `<instrDef>` gives one,
+  else by words in its name, in English, Italian and German
+  (`src/audio/instruments.ts`). "Bass" alone matches nothing (a voice or a
+  double bass). A `sound` prop sets every part's starting sound instead.
+
+**Rejected.**
+- *A part per staff and layer,* as the architecture notes first suggested:
+  two voices on one staff are one instrument, and splitting them would give a
+  violin two mute buttons.
+- *One sampled instrument shared by every part that uses it:* it has one
+  output, so muting one part, or switching its sound, would either silence the
+  others or leave the old sound ringing through its release. The cost of a
+  copy per part is memory and a short decode when two parts pick the same
+  instrument.
+- *Mute by not scheduling notes:* a note already handed to the engine would
+  play on.
+
+**Why.** The roll's first audience reads music as a producer does, and
+mute, solo and a color per track are how a DAW shows several instruments.
+Lanes are not decoration: a wide score on one roll leaves a few pixels per
+semitone. On the 617 sample files, 310 read as more than one part, and the
+stress test's totals did not change.
 
 ## Open questions
 
