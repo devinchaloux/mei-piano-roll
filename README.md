@@ -8,8 +8,10 @@ lists anything in the file it could not show faithfully.
 ## Status
 
 **2026-10-08:** the first reader works. It handles short, cleanly encoded files.
-On the MEI project's 617 sample files it reads everything without crashing; most
-still report a gap (ties, grace notes, repeats, mid-piece changes). A file with
+On the MEI project's 617 sample files it reads everything without crashing, and
+144 read with nothing left out; the rest report a gap (repeats, mid-piece
+changes, notes without a length, a few ties it can't follow). Tied notes sound
+once, as one long note, and grace notes play just before their beat. A file with
 several instruments shows each in its own color, on one roll or one lane per
 part, with mute, solo and a sound for each. The second reader, for everything
 else, is not built yet. Nothing is published to npm yet.
@@ -62,9 +64,12 @@ import { MeiPianoRoll } from 'mei-piano-roll'
 
 Also exported: `NOTE_COLORS`, eight quick-pick note colors that adjust for
 light and dark themes; `parseNative(xml)` for the note data without the player; and
-`rollToSvg(score, options)` for still images, which needs no browser, so a
-site's build can draw pictures straight from its files (`partColors`,
-`separateParts` and `fadedParts` match the player's view of several parts).
+`rollToSvg(score, options)` for still images (`partColors`, `separateParts` and
+`fadedParts` match the player's view of several parts). Drawing needs no
+browser, so a site's build can draw pictures straight from its files; reading
+the MEI does need an XML parser, which Node lacks, so a build gives
+`parseNative` one first, such as jsdom's `DOMParser` (the stress test does
+this, in `stress/samples.stress.ts`).
 
 Sampled instruments are FluidR3 GM by Frank Wen (CC BY 3.0), played by
 [smplr](https://github.com/danigb/smplr); the player credits them whenever one

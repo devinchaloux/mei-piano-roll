@@ -171,20 +171,10 @@ describe('parseNative: what counts as the music', () => {
 // ── Warnings: the reader says what it leaves out ──
 
 describe('parseNative: warnings', () => {
-  it('reports ties', () => {
-    expect(codes(mei('<note pname="c" oct="4" dur="1" tie="i"/>', undefined, '<measure n="2"><staff n="1"><layer n="1"><note pname="c" oct="4" dur="1" tie="t"/></layer></staff></measure>'))).toContain('tie')
-  })
-
   it('pads an unmarked short bar, and reports the shift it causes', () => {
     const s = parseNative(mei('<note pname="g" oct="4" dur="4"/>', undefined, '<measure n="2"><staff n="1"><layer n="1"><note pname="c" oct="5" dur="1"/></layer></staff></measure>'))
     expect(s.notes[1].start).toBe(4) // padded: the known gap, now reported
     expect(s.warnings.map((w) => w.code)).toContain('short-bar')
-  })
-
-  it('reports grace notes it leaves off', () => {
-    const s = parseNative(mei('<note pname="d" oct="5" dur="8" grace="acc"/><note pname="c" oct="5" dur="1"/>'))
-    expect(s.notes).toHaveLength(1)
-    expect(s.warnings.map((w) => w.code)).toContain('grace')
   })
 
   it('reports a file with no opening meter', () => {
@@ -208,5 +198,60 @@ describe('parseNative: warnings', () => {
 
   it('throws on a file that is not XML', () => {
     expect(() => parseNative('<mei><unclosed></mei>')).toThrow(/XML parse error/)
+  })
+})
+
+// ── Ties and grace notes ──
+
+const bar2 = (layer: string) => `<measure n="2"><staff n="1"><layer n="1">${layer}</layer></staff></measure>`
+
+describe('parseNative: ties', () => {
+  it('joins notes tied across a bar line into one note that sounds once', () => {
+    const s = parseNative(mei('<rest dur="2"/><note pname="c" oct="4" dur="2" tie="i"/>', undefined, bar2('<note pname="c" oct="4" dur="2" tie="t"/><rest dur="2"/>')))
+    expect(s.notes.map((n) => [n.name, n.start, n.dur])).toEqual([['C4', 2, 4]])
+    expect(s.warnings).toEqual([])
+  })
+
+  it('follows a chain of ties through a middle note', () => {
+    const s = parseNative(mei('<note pname="e" oct="4" dur="4" tie="i"/><note pname="e" oct="4" dur="4" tie="m"/><note pname="e" oct="4" dur="2" tie="t"/>'))
+    expect(s.notes.map((n) => [n.start, n.dur])).toEqual([[0, 4]])
+  })
+
+  it('joins notes named by a <tie> element, and each tied note of a chord', () => {
+    const xml = mei(
+      '<chord dur="2"><note xml:id="a" pname="c" oct="4"/><note xml:id="b" pname="e" oct="4"/></chord><chord dur="2"><note xml:id="c" pname="c" oct="4"/><note xml:id="d" pname="e" oct="4"/></chord>',
+    ).replace('</measure>', '<tie startid="#a" endid="#c"/><tie startid="#b" endid="#d"/></measure>')
+    expect(parseNative(xml).notes.map((n) => [n.name, n.dur])).toEqual([['C4', 4], ['E4', 4]])
+  })
+
+  it('reports a tie whose other end is missing, and keeps the note as written', () => {
+    const s = parseNative(mei('<note pname="c" oct="4" dur="2" tie="i"/><note pname="d" oct="4" dur="2"/>'))
+    expect(s.notes.map((n) => n.dur)).toEqual([2, 2])
+    expect(s.warnings.map((w) => w.code)).toContain('tie')
+  })
+})
+
+describe('parseNative: grace notes', () => {
+  it('plays a grace note just before its beat, taking its time from the note before', () => {
+    const s = parseNative(mei('<note pname="c" oct="5" dur="2"/><note pname="d" oct="5" dur="16" grace="unacc"/><note pname="c" oct="5" dur="2"/>'))
+    expect(s.notes.map((n) => [n.name, n.start, n.dur])).toEqual([['C5', 0, 1.75], ['D5', 1.75, 0.25], ['C5', 2, 2]])
+    expect(s.warnings).toEqual([])
+  })
+
+  it('places a group of grace notes in order, ending on the beat', () => {
+    const s = parseNative(mei('<note pname="c" oct="5" dur="2"/><graceGrp><note pname="d" oct="5" dur="16"/><note pname="e" oct="5" dur="16"/></graceGrp><note pname="c" oct="5" dur="2"/>'))
+    expect(s.notes.map((n) => [n.name, n.start])).toEqual([['C5', 0], ['D5', 1.5], ['E5', 1.75], ['C5', 2]])
+  })
+
+  it('never takes more than half the time since the note before', () => {
+    const s = parseNative(mei('<note pname="c" oct="5" dur="16"/><note pname="d" oct="5" dur="4" grace="unacc"/><note pname="c" oct="5" dur="2" dots="1"/><rest dur="16"/>'))
+    expect(s.notes.map((n) => [n.name, n.start, n.dur])).toEqual([['C5', 0, 0.125], ['D5', 0.125, 0.125], ['C5', 0.25, 3]])
+  })
+
+  it('leaves out grace notes with no written length, or with no time before them', () => {
+    expect(codes(mei('<note pname="c" oct="5" dur="2"/><note pname="d" oct="5" grace="unacc"/><note pname="c" oct="5" dur="2"/>'))).toContain('grace-no-dur')
+    const s = parseNative(mei('<note pname="d" oct="5" dur="8" grace="acc"/><note pname="c" oct="5" dur="1"/>'))
+    expect(s.notes).toHaveLength(1)
+    expect(s.warnings.map((w) => w.code)).toContain('grace-start')
   })
 })

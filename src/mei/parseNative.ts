@@ -6,10 +6,11 @@ import type { MeiBar, MeiNote, MeiPart, MeiScore, MeiWarning } from './types'
  * Meant for short, cleanly encoded files. It reads the opening meter, each
  * staff's opening key and the first tempo once, groups the staves into parts
  * (instruments), walks every layer of every measure, and turns notes and chords
- * into MeiNote records. What it cannot do
- * (ties, repeats, unmarked short bars, mid-piece changes, transposing
- * instruments) it reports as warnings rather than hiding. Files that need those go to the second reader,
- * not built yet (docs/decisions.md).
+ * into MeiNote records, joining tied notes and placing grace notes just before
+ * their beat. What it cannot do (repeats, unmarked short bars, mid-piece
+ * changes, transposing instruments) it reports as warnings rather than hiding.
+ * Files that need those go to the second reader, not built yet
+ * (docs/decisions.md).
  *
  * Browser only: it uses the browser's DOMParser. Tests run it under jsdom.
  * ======================================================================== */
@@ -145,6 +146,22 @@ function durToBeats(node: Element, scale: number, warn: Warnings): number {
 
 // ── Walking a layer ──
 
+// Carried from bar to bar for each staff and layer: the notes last struck (a
+// chord strikes several) and when, so a grace note can take its time from
+// them, and the grace notes still waiting for the note they lead into.
+interface LayerState {
+  last: MeiNote[]
+  lastStart: number | null
+  graces: { el: Element; beats: number }[]
+}
+
+// Every note by its xml:id, and the notes a tie starts from, for joining tied
+// notes once the whole file is read.
+interface TieIndex {
+  byId: Map<string, MeiNote>
+  starts: Set<MeiNote>
+}
+
 interface LayerEnv {
   resolve: (el: Element) => Element
   keysig: string | null
@@ -152,58 +169,169 @@ interface LayerEnv {
   measureBeats: number
   notes: MeiNote[]
   warn: Warnings
+  layer: LayerState
+  ties: TieIndex
 }
 
-function pushNote(n: Element, start: number, beats: number, env: LayerEnv): void {
+// A chord's tie applies to every note in it that has none of its own.
+function pushNote(n: Element, start: number, beats: number, env: LayerEnv, chordTie: string | null = null): MeiNote | null {
   const midi = noteToMidi(n, env.keysig)
   if (midi === null) {
     env.warn.add('no-pitch', 'Notes without a pitch are left out.')
-    return
+    return null
   }
-  if (n.getAttribute('tie') === 'm' || n.getAttribute('tie') === 't') {
-    env.warn.add('tie', 'Tied notes play as separate notes.')
-  }
-  env.notes.push({ midi, start, dur: beats, name: midiName(midi), part: env.part })
+  const note: MeiNote = { midi, start, dur: beats, name: midiName(midi), part: env.part }
+  env.notes.push(note)
+  const id = n.getAttribute('xml:id')
+  if (id && !env.ties.byId.has(id)) env.ties.byId.set(id, note)
+  // MEI's tie attribute: i starts a tie, m continues one, t ends it.
+  const tie = n.getAttribute('tie') ?? chordTie
+  if (tie === 'i' || tie === 'm') env.ties.starts.add(note)
+  return note
 }
 
-function walkLayer(node: Element, ctx: { t: number }, env: LayerEnv, scale: number): void {
+function strike(notes: (MeiNote | null)[], start: number, env: LayerEnv): void {
+  env.layer.last = notes.filter((n): n is MeiNote => n !== null)
+  env.layer.lastStart = start
+}
+
+// Some files write the duration on each note of a chord instead of on the
+// chord itself; then take it from the first note that has one.
+function durSourceOf(chord: Element): Element {
+  return chord.getAttribute('dur') ? chord : childrenNamed(chord, 'note').find((n) => n.getAttribute('dur')) ?? chord
+}
+
+// ── Grace notes ──
+// A grace note plays just before its beat, taking its time from the note
+// before, so the beat itself stays where it is written. Each takes its written
+// length, but a run of them takes at most half the time since the note before,
+// so that note is never swallowed. One with no written length is left out.
+
+function queueGrace(el: Element, scale: number, env: LayerEnv): void {
+  const source = el.localName === 'chord' ? durSourceOf(el) : el
+  if (!source.getAttribute('dur')) {
+    env.warn.add('grace-no-dur', 'Grace notes without a written length are left out.')
+    return
+  }
+  env.layer.graces.push({ el, beats: durToBeats(source, scale, env.warn) })
+}
+
+/** Places the waiting grace notes so they end at `beat`. */
+function placeGraces(beat: number, env: LayerEnv): void {
+  const graces = env.layer.graces
+  if (!graces.length) return
+  env.layer.graces = []
+  const room = beat - (env.layer.lastStart ?? 0)
+  if (room <= 1e-9) {
+    env.warn.add('grace-start', 'Grace notes with no time before them are left out.', graces.length)
+    return
+  }
+  const total = graces.reduce((sum, g) => sum + g.beats, 0)
+  const fit = Math.min(1, room / 2 / total)
+  let t = beat - total * fit
+  for (const n of env.layer.last) if (n.start + n.dur > t) n.dur = Math.max(0, t - n.start)
+  for (const g of graces) {
+    const beats = g.beats * fit
+    const chordTie = g.el.localName === 'chord' ? g.el.getAttribute('tie') : null
+    const els = g.el.localName === 'chord' ? childrenNamed(g.el, 'note') : [g.el]
+    for (const n of els) pushNote(n, t, beats, env, chordTie)
+    t += beats
+  }
+}
+
+function walkLayer(node: Element, ctx: { t: number }, env: LayerEnv, scale: number, inGrace = false): void {
   for (const raw of Array.from(node.children)) {
     const child = env.resolve(raw)
     const tag = child.localName
-    if (tag === 'beam' || tag === 'graceGrp' || tag === 'bTrem' || tag === 'fTrem') {
-      walkLayer(child, ctx, env, scale)
+    if (tag === 'beam' || tag === 'bTrem' || tag === 'fTrem') {
+      walkLayer(child, ctx, env, scale, inGrace)
+    } else if (tag === 'graceGrp') {
+      walkLayer(child, ctx, env, scale, true)
     } else if (tag === 'tuplet') {
       // A triplet (num 3, numbase 2) squeezes three notes into the time of two.
       const num = parseInt(child.getAttribute('num') || '3', 10)
       const numbase = parseInt(child.getAttribute('numbase') || '2', 10)
-      walkLayer(child, ctx, env, scale * (numbase / num))
-    } else if (tag === 'chord') {
-      // Some files write the duration on each note of a chord instead of on the
-      // chord itself; then take it from the first note that has one.
-      const durSource = child.getAttribute('dur') ? child : childrenNamed(child, 'note').find((n) => n.getAttribute('dur')) ?? child
-      const beats = durToBeats(durSource, scale, env.warn)
-      for (const n of childrenNamed(child, 'note')) pushNote(n, ctx.t, beats, env)
-      ctx.t += beats
-    } else if (tag === 'note') {
-      if (child.getAttribute('grace')) {
-        env.warn.add('grace', 'Grace notes are left out.')
+      walkLayer(child, ctx, env, scale * (numbase / num), inGrace)
+    } else if (tag === 'chord' || tag === 'note') {
+      if (inGrace || child.getAttribute('grace')) {
+        queueGrace(child, scale, env)
         continue
       }
-      const beats = durToBeats(child, scale, env.warn)
-      pushNote(child, ctx.t, beats, env)
+      placeGraces(ctx.t, env)
+      const isChord = tag === 'chord'
+      const beats = durToBeats(isChord ? durSourceOf(child) : child, scale, env.warn)
+      const struck = isChord
+        ? childrenNamed(child, 'note').map((n) => pushNote(n, ctx.t, beats, env, child.getAttribute('tie')))
+        : [pushNote(child, ctx.t, beats, env)]
+      strike(struck, ctx.t, env)
       ctx.t += beats
-    } else if (tag === 'rest' || tag === 'space') {
-      ctx.t += durToBeats(child, scale, env.warn)
-    } else if (tag === 'mRest' || tag === 'mSpace') {
-      ctx.t += env.measureBeats
-    } else if (tag === 'multiRest') {
-      ctx.t += env.measureBeats * parseInt(child.getAttribute('num') || '1', 10)
+    } else if (tag === 'rest' || tag === 'space' || tag === 'mRest' || tag === 'mSpace' || tag === 'multiRest') {
+      placeGraces(ctx.t, env)
+      strike([], ctx.t, env)
+      if (tag === 'mRest' || tag === 'mSpace') ctx.t += env.measureBeats
+      else if (tag === 'multiRest') ctx.t += env.measureBeats * parseInt(child.getAttribute('num') || '1', 10)
+      else ctx.t += durToBeats(child, scale, env.warn)
     } else if (tag === 'keySig' || tag === 'meterSig') {
       env.warn.add('mid-change', 'Only the opening key, meter and tempo are used.')
     } else if (!SILENT_IN_LAYER.has(tag)) {
       env.warn.add(`skipped:${tag}`, `<${tag}> is not shown.`)
     }
   }
+}
+
+// ── Ties ──
+// A tie joins written notes into one sound, so a tied chain becomes one note,
+// as long as the whole chain, sounding once. The bar lines still show where
+// the written notes fall. A tie is found two ways: a <tie> element naming the
+// notes at each end, or a note marked tie="i" or "m", which continues into the
+// next note of the same pitch in the same part, starting where it ends.
+
+function joinTies(notes: MeiNote[], ties: TieIndex, music: Document | Element, warn: Warnings): MeiNote[] {
+  const key = (part: number, midi: number, beat: number) => `${part}:${midi}:${Math.round(beat * 1e6)}`
+  const byOnset = new Map<string, MeiNote>()
+  const byEnd = new Map<string, MeiNote>()
+  for (const n of notes) {
+    if (!byOnset.has(key(n.part, n.midi, n.start))) byOnset.set(key(n.part, n.midi, n.start), n)
+    byEnd.set(key(n.part, n.midi, n.start + n.dur), n)
+  }
+  // The note a tie continues into: same part and pitch, starting where it ends.
+  const after = (n: MeiNote) => byOnset.get(key(n.part, n.midi, n.start + n.dur))
+  const before = (n: MeiNote) => byEnd.get(key(n.part, n.midi, n.start))
+
+  const next = new Map<MeiNote, MeiNote>()
+  let lost = 0
+  // A <tie> may name only one end (the other by its beat); find that end by pitch and time.
+  for (const el of allDeep(music, 'tie')) {
+    let from = ties.byId.get((el.getAttribute('startid') ?? '').replace(/^#/, ''))
+    let to = ties.byId.get((el.getAttribute('endid') ?? '').replace(/^#/, ''))
+    if (from && !to) to = after(from)
+    if (to && !from) from = before(to)
+    if (from && to && from !== to) next.set(from, to)
+    else lost++
+  }
+  for (const n of ties.starts) {
+    if (next.has(n)) continue
+    const to = after(n)
+    if (to && to !== n) next.set(n, to)
+    else lost++
+  }
+  if (lost) warn.add('tie', "Some tied notes play separately: the tie's other end wasn't found.", lost)
+  if (!next.size) return notes
+
+  // Earliest first, so each chain is joined from its first note.
+  const joined = new Set<MeiNote>()
+  for (const head of [...notes].sort((a, b) => a.start - b.start)) {
+    if (joined.has(head)) continue
+    let cur = head
+    while (next.has(cur)) {
+      const to = next.get(cur)!
+      if (joined.has(to) || to === head) break
+      head.dur = to.start + to.dur - head.start
+      joined.add(to)
+      cur = to
+    }
+  }
+  return notes.filter((n) => !joined.has(n))
 }
 
 // ── Shorthand references ──
@@ -452,8 +580,6 @@ function checkFile(doc: Document | Element, meter: OpeningMeter, warn: Warnings)
     warn.add('transposing', 'Transposing parts play at written pitch.', transposing.length)
   }
 
-  const ties = allDeep(doc, 'tie').length
-  if (ties) warn.add('tie', 'Tied notes play as separate notes.', ties)
 
   const repeats = allDeep(doc, 'measure').filter((m) => /rpt/.test((m.getAttribute('left') || '') + (m.getAttribute('right') || ''))).length
   if (repeats || allDeep(doc, 'expansion').length) {
@@ -502,7 +628,9 @@ export function parseNative(xmlText: string): MeiScore {
 
   checkFile(music, meter, warn)
 
-  const notes: MeiNote[] = []
+  const read: MeiNote[] = []
+  const ties: TieIndex = { byId: new Map(), starts: new Set() }
+  const layers = new Map<string, LayerState>()
   const bars: MeiBar[] = []
   let measureStart = 0
   let maxEnd = 0
@@ -515,11 +643,17 @@ export function parseNative(xmlText: string): MeiScore {
     for (const staff of allDeep(resolve(measure), 'staff').map(resolve)) {
       const keysig = keys.byStaff.get(staff.getAttribute('n') || '') ?? keys.score
       const part = partTable.partOf(staff.getAttribute('n') || '')
-      for (const layer of allDeep(staff, 'layer').map(resolve)) {
+      allDeep(staff, 'layer').map(resolve).forEach((layer, li) => {
+        const layerKey = `${staff.getAttribute('n') || ''}/${layer.getAttribute('n') || li + 1}`
+        let state = layers.get(layerKey)
+        if (!state) layers.set(layerKey, (state = { last: [], lastStart: null, graces: [] }))
         const ctx = { t: measureStart }
-        walkLayer(layer, ctx, { resolve, keysig, part, measureBeats, notes, warn }, 1)
+        const env: LayerEnv = { resolve, keysig, part, measureBeats, notes: read, warn, layer: state, ties }
+        walkLayer(layer, ctx, env, 1)
+        // Grace notes left at the end of a layer lead into its end.
+        placeGraces(ctx.t, env)
         if (ctx.t > measureMax) measureMax = ctx.t
-      }
+      })
     }
     const content = measureMax - measureStart
     // metcon="false" is MEI's flag for a bar that is meant to be short (a
@@ -539,6 +673,8 @@ export function parseNative(xmlText: string): MeiScore {
     }
     if (measureMax > maxEnd) maxEnd = measureMax
   })
+
+  const notes = joinTies(read, ties, music, warn)
 
   return {
     title,
