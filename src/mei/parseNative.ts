@@ -22,7 +22,7 @@ const FLAT_ORDER = ['b', 'e', 'a', 'd', 'g', 'c', 'f']
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
 
 // Layer children that carry no sounding time, so skipping them loses nothing
-// a piano roll shows. Anything else unrecognised is reported.
+// a piano roll shows. Anything else unrecognized is reported.
 const SILENT_IN_LAYER = new Set(['clef', 'clefGrp', 'barLine', 'custos', 'sb', 'pb', 'cb', 'colLayout', 'annot', 'dot', 'accid', 'artic'])
 
 // ── Warnings ──
@@ -125,7 +125,7 @@ export function isBlackKey(midi: number): boolean {
 function durToBeats(node: Element, scale: number, warn: Warnings): number {
   const durAttr = node.getAttribute('dur')
   if (!durAttr) {
-    warn.add('no-dur', 'Some notes or rests have no written duration (for example, only @dur.ppq); they take no time on the roll.')
+    warn.add('no-dur', 'Notes without a written length take no time.')
     return 0
   }
   let base: number
@@ -133,7 +133,7 @@ function durToBeats(node: Element, scale: number, warn: Warnings): number {
   else if (durAttr === 'breve') base = 8
   else base = 4 / parseInt(durAttr, 10)
   if (!isFinite(base) || base <= 0) {
-    warn.add('bad-dur', `Some durations could not be read (for example "${durAttr}"); they take no time on the roll.`)
+    warn.add('bad-dur', `Unreadable note lengths (like "${durAttr}") take no time.`)
     return 0
   }
   const dots = parseInt(node.getAttribute('dots') || '0', 10)
@@ -155,11 +155,11 @@ interface LayerEnv {
 function pushNote(n: Element, start: number, beats: number, env: LayerEnv): void {
   const midi = noteToMidi(n, env.keysig)
   if (midi === null) {
-    env.warn.add('no-pitch', 'Some notes have no readable pitch (no @pname or @oct) and are left off the roll.')
+    env.warn.add('no-pitch', 'Notes without a pitch are left out.')
     return
   }
   if (n.getAttribute('tie') === 'm' || n.getAttribute('tie') === 't') {
-    env.warn.add('tie', 'Tied notes are drawn and played as separate, re-struck notes.')
+    env.warn.add('tie', 'Tied notes play as separate notes.')
   }
   env.notes.push({ midi, start, dur: beats, name: midiName(midi) })
 }
@@ -184,7 +184,7 @@ function walkLayer(node: Element, ctx: { t: number }, env: LayerEnv, scale: numb
       ctx.t += beats
     } else if (tag === 'note') {
       if (child.getAttribute('grace')) {
-        env.warn.add('grace', 'Grace notes take no time and are left off the roll.')
+        env.warn.add('grace', 'Grace notes are left out.')
         continue
       }
       const beats = durToBeats(child, scale, env.warn)
@@ -197,9 +197,9 @@ function walkLayer(node: Element, ctx: { t: number }, env: LayerEnv, scale: numb
     } else if (tag === 'multiRest') {
       ctx.t += env.measureBeats * parseInt(child.getAttribute('num') || '1', 10)
     } else if (tag === 'keySig' || tag === 'meterSig') {
-      env.warn.add('mid-change', 'Changes of key, meter or tempo after the start are ignored; the first one holds throughout.')
+      env.warn.add('mid-change', 'Only the opening key, meter and tempo are used.')
     } else if (!SILENT_IN_LAYER.has(tag)) {
-      env.warn.add(`skipped:${tag}`, `<${tag}> elements inside a layer are skipped.`)
+      env.warn.add(`skipped:${tag}`, `<${tag}> is not shown.`)
     }
   }
 }
@@ -317,27 +317,27 @@ function openingKeys(scoreDef: Element | null, root: Document | Element): { bySt
 
 function checkFile(doc: Document | Element, meter: OpeningMeter, warn: Warnings): void {
   if (!meter.found && allDeep(doc, 'measure').length) {
-    warn.add('no-meter', 'No opening meter is written, so bar lines assume 4/4.')
+    warn.add('no-meter', 'No meter given, so bars assume 4/4.')
   }
 
   const defs = [...allDeep(doc, 'scoreDef'), ...allDeep(doc, 'staffDef')]
   const meters = new Set(defs.map((d) => d.getAttribute('meter.count') && `${d.getAttribute('meter.count')}/${d.getAttribute('meter.unit')}`).filter(Boolean))
   const tempos = new Set(allDeep(doc, 'tempo').map((t) => t.getAttribute('midi.bpm')).filter(Boolean))
   if (meters.size > 1 || tempos.size > 1) {
-    warn.add('mid-change', 'Changes of key, meter or tempo after the start are ignored; the first one holds throughout.')
+    warn.add('mid-change', 'Only the opening key, meter and tempo are used.')
   }
 
   const transposing = allDeep(doc, 'staffDef').filter((s) => s.getAttribute('trans.semi') && s.getAttribute('trans.semi') !== '0')
   if (transposing.length) {
-    warn.add('transposing', 'Transposing instruments play at written pitch, not sounding pitch.', transposing.length)
+    warn.add('transposing', 'Transposing parts play at written pitch.', transposing.length)
   }
 
   const ties = allDeep(doc, 'tie').length
-  if (ties) warn.add('tie', 'Tied notes are drawn and played as separate, re-struck notes.', ties)
+  if (ties) warn.add('tie', 'Tied notes play as separate notes.', ties)
 
   const repeats = allDeep(doc, 'measure').filter((m) => /rpt/.test((m.getAttribute('left') || '') + (m.getAttribute('right') || ''))).length
   if (repeats || allDeep(doc, 'expansion').length) {
-    warn.add('repeat', 'Repeats are not expanded: repeated sections play once.')
+    warn.add('repeat', 'Repeats play once.')
   }
 }
 
@@ -386,7 +386,7 @@ export function parseNative(xmlText: string): MeiScore {
   let measureStart = 0
   let maxEnd = 0
   const measures = allDeep(music, 'measure')
-  if (!measures.length) warn.add('no-measures', 'The file has no <measure> elements, so there is nothing to draw.')
+  if (!measures.length) warn.add('no-measures', 'No measures to show.')
 
   measures.forEach((measure, i) => {
     bars.push({ start: measureStart, label: measure.getAttribute('n') || String(i + 1) })
@@ -409,7 +409,7 @@ export function parseNative(xmlText: string): MeiScore {
       if (meantShort) {
         measureStart += content
       } else {
-        warn.add('short-bar', 'Bars shorter than the meter, and not marked as meant to be short, are padded to a full bar, which shifts the notes after them.')
+        warn.add('short-bar', 'Short bars are padded to full length.')
         measureStart += measureBeats
       }
     } else {

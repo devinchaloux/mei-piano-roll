@@ -47,12 +47,13 @@ import { MeiPianoRoll } from 'mei-piano-roll'
 |---|---|
 | `src` / `meiText` | The MEI file, by address or as text |
 | `sound` | Starting sound, by id (see `SOUNDS`); default the square lead |
-| `theme` | `"studio"` (default), `"paper"`, `"neon"`, `"ink"`, or your own colours |
-| `accent` | Note colour; without it, the page's `--accent` CSS variable, then the theme's |
+| `theme` | `"studio"` (default), `"paper"`, `"neon"`, `"ink"`, or your own colors |
+| `accent` | Note color; without it, the page's `--accent` CSS variable, then the theme's |
 | `height`, `pxPerBeat`, `bpm` | Size, starting zoom, tempo override |
 | `onLoad` | Called with the parsed score, warnings included |
 
-Also exported: `parseNative(xml)` for the note data without the player, and
+Also exported: `NOTE_COLORS`, eight quick-pick note colors that adjust for
+light and dark themes; `parseNative(xml)` for the note data without the player; and
 `rollToSvg(score, options)` for still images, which needs no browser, so a
 site's build can draw pictures straight from its files.
 
@@ -85,7 +86,7 @@ takes about two minutes. Its job is to show what breaks, not to pass; see
 | Path | What it is |
 |---|---|
 | `src/mei/` | The reader: MEI text in, note data and warnings out. No UI. |
-| `src/roll/` | The player component (one canvas) and its colour themes. |
+| `src/roll/` | The player component (one canvas) and its color themes. |
 | `src/audio/` | Sounds: the synth recipes, the sampled-instrument list, the engine that plays them. |
 | `src/render/` | Still images: SVG from a score, and PNG in the browser. |
 | `src/test/` | Unit tests, with short MEI snippets written for them. |

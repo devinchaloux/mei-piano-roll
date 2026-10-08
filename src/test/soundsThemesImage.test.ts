@@ -3,6 +3,7 @@ import { getSoundfontNames } from 'smplr'
 import { SOUNDS, DEFAULT_SOUND, findSound } from '../audio/sounds'
 import { RECIPES } from '../audio/synth'
 import { THEMES, resolveTheme } from '../roll/themes'
+import { NOTE_COLORS, noteColorFor, isLightTheme } from '../roll/noteColors'
 import { rollToSvg } from '../render/svg'
 import { parseNative } from '../mei/parseNative'
 
@@ -77,7 +78,7 @@ describe('rollToSvg', () => {
     expect(noteRects(rollToSvg(score, { fromBar: 2, toBar: 3 }))).toBe(2)
   })
 
-  it('uses the theme and the note colour given', () => {
+  it('uses the theme and the note color given', () => {
     const svg = rollToSvg(score, { theme: 'paper', noteColor: '#00ff00' })
     expect(svg).toContain(THEMES.paper.background)
     expect(svg).toContain('fill="#00ff00"')
@@ -87,5 +88,21 @@ describe('rollToSvg', () => {
     const svg = rollToSvg(score, { keyboard: false, background: false })
     expect(svg).not.toContain(`fill="${THEMES.studio.keyWhite}"`)
     expect(svg).not.toContain(`<rect width="1200" height="400" fill=`)
+  })
+})
+
+// ── Quick-pick note colors ──
+
+describe('note colors', () => {
+  it('uses the bright strength on dark themes and the deep one on light themes', () => {
+    const magenta = NOTE_COLORS[0]
+    expect(noteColorFor(magenta, THEMES.studio)).toBe(magenta.color)
+    expect(noteColorFor(magenta, THEMES.paper)).toBe(magenta.onLight)
+    expect(isLightTheme(THEMES.ink)).toBe(true)
+    expect(isLightTheme(THEMES.neon)).toBe(false)
+  })
+
+  it("includes every built-in theme's own note color", () => {
+    for (const t of Object.values(THEMES)) expect(NOTE_COLORS.map((c) => noteColorFor(c, t))).toContain(t.note)
   })
 })

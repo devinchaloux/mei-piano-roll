@@ -14,7 +14,7 @@ import { svgToPng, downloadBlob } from "../render/toPng";
  * piano roll on a single fixed canvas (camera/offset based, so scrolling +
  * playback-follow are smooth — no giant scroll-canvas, no scrollLeft jumps),
  * and plays it with a choice of sounds: built-in synths, or sampled instruments
- * downloaded when chosen (src/audio/). Colours come from a theme (./themes.ts).
+ * downloaded when chosen (src/audio/). Colors come from a theme (./themes.ts).
  *
  * Usage:
  *   <MeiPianoRoll meiText={xmlString} />
@@ -33,12 +33,12 @@ export interface MeiPianoRollProps {
   /** Override the tempo from the file. */
   bpm?: number;
   /**
-   * Note colour. Without it, the page's `--accent` CSS variable is used (and
-   * followed live, so a site's accent switch recolours the notes), then the
-   * theme's own note colour.
+   * Note color. Without it, the page's `--accent` CSS variable is used (and
+   * followed live, so a site's accent switch recolors the notes), then the
+   * theme's own note color.
    */
   accent?: string;
-  /** Colour theme for the roll: a preset name or your own colours. Default "studio". */
+  /** Color theme for the roll: a preset name or your own colors. Default "studio". */
   theme?: ThemeName | RollTheme;
   /** Starting sound, by id (see SOUNDS). Default the square lead. */
   sound?: string;
@@ -122,7 +122,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   useEffect(() => { pxRef.current = zoom; drawRef.current(); }, [zoom]);
   useEffect(() => { loopRef.current = loop; }, [loop]);
 
-  // ---- Colours ------------------------------------------------------------
+  // ---- Colors ------------------------------------------------------------
   // Follow the page's --accent live: a site's theme or accent switch changes
   // attributes on <html>, so watching those is enough (no polling).
   useEffect(() => {
@@ -242,19 +242,19 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
 
   // ---- Setup: parse, canvas sizing, input, render loop -------------------
   useEffect(() => {
-    let cancelled = false;
+    let canceled = false;
 
     async function load() {
       try {
         let text = meiText;
         if (!text && src) {
           const res = await fetch(src);
-          if (!res.ok) throw new Error(`Could not fetch ${src} (${res.status})`);
+          if (!res.ok) throw new Error(`Couldn't load ${src} (${res.status}).`);
           text = await res.text();
         }
-        if (!text) throw new Error("No MEI provided (pass `meiText` or `src`).");
+        if (!text) throw new Error("No MEI file given.");
         const score = parseNative(text);
-        if (cancelled) return;
+        if (canceled) return;
         scoreRef.current = score;
         setWarnings(score.warnings);
         onLoadRef.current?.(score);
@@ -267,13 +267,13 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         setStatus("ready");
         drawRef.current();
       } catch (err) {
-        if (cancelled) return;
+        if (canceled) return;
         setErrMsg(err instanceof Error ? err.message : String(err));
         setStatus("error");
       }
     }
     load();
-    return () => { cancelled = true; };
+    return () => { canceled = true; };
   }, [src, meiText, props.bpm]);
 
   // Drawing + input + loop live in one mount effect using refs only.
@@ -550,7 +550,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   }, []);
 
   // ---- Image export ------------------------------------------------------
-  // Saves what is on screen: the bars in view, in the current colours.
+  // Saves what is on screen: the bars in view, in the current colors.
   async function saveImage() {
     const score = scoreRef.current;
     const cv = canvasRef.current;
@@ -626,9 +626,9 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         </span>
         <label className="mpr-ctl">
           Sound
-          <select value={soundId} onChange={(e) => onSoundChange(e.target.value)} aria-label="Sound">
+          <select value={soundId} onChange={(e) => onSoundChange(e.target.value)} aria-label="Sound" title="Instruments load the first time you choose them">
             {(["Synth", "Instrument"] as const).map((group) => (
-              <optgroup key={group} label={group === "Synth" ? "Synths" : "Instruments (download on first use)"}>
+              <optgroup key={group} label={group === "Synth" ? "Synths" : "Instruments"}>
                 {SOUNDS.filter((snd) => snd.group === group).map((snd) => (
                   <option key={snd.id} value={snd.id}>{snd.label}</option>
                 ))}
@@ -647,29 +647,35 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
             onChange={(e) => setZoom(parseInt(e.target.value, 10))}
           />
         </span>
-        <button className="mpr-btn" onClick={saveImage} disabled={status !== "ready"} title="Save the bars in view as a PNG image">
-          ⤓ Image
+        <button className="mpr-btn" onClick={saveImage} disabled={status !== "ready"} title="Save the visible bars as a PNG">
+          Image
         </button>
       </div>
 
-      <canvas ref={canvasRef} className="mpr-canvas" style={{ height, background: theme.background }} tabIndex={0} />
+      <canvas
+        ref={canvasRef}
+        className="mpr-canvas"
+        style={{ height, background: theme.background }}
+        tabIndex={0}
+        title="Drag or scroll to move. Click to set the playhead. Space plays; Home returns to the start."
+      />
 
-      <div className={"mpr-status" + (status === "error" ? " mpr-error" : "")}>
-        {status === "loading" && "Loading…"}
-        {status === "ready" &&
-          "Drag to pan · scroll to scrub · click to seek · ⏮ / double-click / Home to reset · audio starts on first play"}
-        {status === "error" && "Error: " + errMsg}
-        {soundStatus === "loading" && <span className="mpr-sound-note"> · Downloading the {findSound(soundId).label.toLowerCase()} sound…</span>}
-        {soundStatus === "error" && (
-          <span className="mpr-sound-note mpr-error"> · Couldn't download that sound. Check the connection, or pick a synth.</span>
-        )}
-      </div>
+      {/* Only what needs saying: loading, and errors. How to use the roll is in
+          the canvas tooltip. */}
+      {(status !== "ready" || soundStatus !== "ready") && (
+        <div className={"mpr-status" + (status === "error" || soundStatus === "error" ? " mpr-error" : "")}>
+          {status === "loading" && "Loading…"}
+          {status === "error" && errMsg}
+          {status === "ready" && soundStatus === "loading" && `Loading ${findSound(soundId).label}…`}
+          {status === "ready" && soundStatus === "error" && `Couldn't load ${findSound(soundId).label}. Try again or choose a synth.`}
+        </div>
+      )}
       {findSound(soundId).kind === "sampled" && <div className="mpr-credit">{SAMPLE_CREDIT}</div>}
 
       {/* The roll never hides what it leaves out (docs/decisions.md). */}
       {status === "ready" && warnings.length > 0 && (
         <details className="mpr-warnings">
-          <summary>What this roll leaves out ({warnings.length})</summary>
+          <summary title="Parts of the file the roll can't show yet">Not shown ({warnings.length})</summary>
           <ul>
             {warnings.map((w) => (
               <li key={w.code}>

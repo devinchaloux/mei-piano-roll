@@ -11,7 +11,7 @@
   copyright notice are left out at run time, so 617 are read. The report is
   `fixtures/stress-report.md`.
 - **Unit tests:** short MEI snippets written for the tests, in this
-  repository's licence.
+  repository's license.
 
 If a file from anywhere else is ever needed, record it here first: file, what
-it covers, source URL, licence, date added.
+it covers, source URL, license, date added.

@@ -2,8 +2,8 @@
 import { parseNative } from '../mei/parseNative'
 
 // ── Helpers ──
-// Each test writes a few bars of MEI by hand, aimed at one behaviour. They are
-// written for these tests, so no sample file (and no licence question) is needed.
+// Each test writes a few bars of MEI by hand, aimed at one behavior. They are
+// written for these tests, so no sample file (and no license question) is needed.
 
 function mei(layer: string, staffDef = 'meter.count="4" meter.unit="4"', extraMeasures = ''): string {
   return `<?xml version="1.0" encoding="UTF-8"?>

@@ -69,5 +69,5 @@ export function findSound(id: string | undefined): Sound {
   return SOUNDS.find((s) => s.id === id) ?? SOUNDS.find((s) => s.id === DEFAULT_SOUND)!
 }
 
-/** Shown wherever a sampled sound is in use: the FluidR3 licence asks for credit. */
-export const SAMPLE_CREDIT = 'Instrument samples: FluidR3 GM by Frank Wen, CC BY 3.0, via midi-js-soundfonts'
+/** Shown wherever a sampled sound is in use: the FluidR3 license asks for credit. */
+export const SAMPLE_CREDIT = 'Samples: FluidR3 GM by Frank Wen (CC BY 3.0)'

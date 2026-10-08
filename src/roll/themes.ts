@@ -1,10 +1,10 @@
-// ── Colour themes ──
-// A theme colours the roll's surface: background, key rows, grid, keyboard,
-// text and playhead, plus a default note colour. The page's controls (buttons,
+// ── Color themes ──
+// A theme colors the roll's surface: background, key rows, grid, keyboard,
+// text and playhead, plus a default note color. The page's controls (buttons,
 // header) follow the page's own CSS variables instead (see the component's CSS).
 //
-// The note colour is resolved in this order: the `accent` prop, then the page's
-// `--accent` CSS variable (so a site's live accent switch recolours the notes),
+// The note color is resolved in this order: the `accent` prop, then the page's
+// `--accent` CSS variable (so a site's live accent switch recolors the notes),
 // then the theme's own `note`.
 
 export interface RollTheme {
@@ -19,7 +19,7 @@ export interface RollTheme {
   keyBlack: string
   text: string
   playhead: string
-  /** Default note colour, when neither the prop nor the page sets one. */
+  /** Default note color, when neither the prop nor the page sets one. */
   note: string
   /** Notes sounding under the playhead. */
   activeNote: string
@@ -74,7 +74,7 @@ export const THEMES = {
     activeNote: '#ffffff',
     noteText: '#00141a',
   },
-  // Black on white with no colour at all, for printing in greyscale.
+  // Black on white with no color at all, for printing in grayscale.
   ink: {
     background: '#ffffff',
     rowWhite: '#ffffff',
@@ -99,7 +99,7 @@ export function resolveTheme(theme: ThemeName | RollTheme | undefined): RollThem
   return typeof theme === 'string' ? (THEMES[theme] ?? THEMES[DEFAULT_THEME]) : theme
 }
 
-/** Lightens (amt > 0) or darkens (amt < 0) a hex colour; other colour formats pass through. */
+/** Lightens (amt > 0) or darkens (amt < 0) a hex color; other color formats pass through. */
 export function shade(hex: string, amt: number): string {
   const m = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex.trim())
   if (!m) return hex

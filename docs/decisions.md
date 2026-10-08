@@ -1,8 +1,8 @@
 # Decisions
 
 **Status (2026-10-07):** the native reader works, and the player has a sound
-picker, colour themes and image export. **Next action:** several instruments in
-one roll (colour by part, or separate rolls), then annotations, then the second
+picker, color themes and image export. **Next action:** several instruments in
+one roll (color by part, or separate rolls), then annotations, then the second
 reader (Verovio) for any MEI file.
 
 Each decision gets: date, the choice, the alternatives rejected, and why, so it
@@ -131,7 +131,7 @@ encoding slip than a pickup.
 **Rejected.**
 - *Synths only:* no real piano or trumpet.
 - *The Musyng Kite recordings,* smplr's default: richer but under a share-alike
-  licence.
+  license.
 - *Tone.js:* five times the size, for features the roll doesn't need.
 
 **Why.** The roll's first audience reads music as a producer does, so
@@ -142,23 +142,23 @@ a piece needs them, and a page pays for them only when someone listens.
 site. Before the package is public, host a copy alongside it (smplr supports a
 custom address).
 
-### 2026-10-07: colour themes, and notes follow the page's accent
+### 2026-10-07: color themes, and notes follow the page's accent
 
 **Choice.** Four themes for the roll's surface (`src/roll/themes.ts`): studio
 (the default, a dark DAW surface), paper (light), neon (high contrast) and ink
-(greyscale, for print), or any set of colours passed in. The note colour comes
+(grayscale, for print), or any set of colors passed in. The note color comes
 from the `accent` prop, else the page's `--accent` CSS variable, followed live,
 else the theme.
 
 **Why.** Following the page's variable means a site's theme or accent switch
-recolours the notes with no wrapper code; the prop and themes cover pages that
+recolors the notes with no wrapper code; the prop and themes cover pages that
 have no such variable.
 
 ### 2026-10-07: still images as SVG, made without a browser
 
 **Choice.** `rollToSvg(score, options)` draws any range of bars as SVG text:
 size, keyboard, bar numbers, note names, transparent background, theme and note
-colour are options. It needs no browser, so a site's build can draw pictures
+color are options. It needs no browser, so a site's build can draw pictures
 straight from the excerpt files. `svgToPng` makes a PNG in the browser. The
 player's Image button saves the bars in view; the demo page has a full image
 maker.
@@ -178,6 +178,28 @@ project goes public.
 
 **Why.** Trying the roll, and hearing the sampled sounds, should not require
 installing anything; previews let a change be heard before it merges.
+
+### 2026-10-08: brief interface text, details in tooltips, American English
+
+**Choice.** The player and the demo say only what a control does or what to do
+next; reasons, limits and how-to hints go in tooltips; status text appears only
+while something loads or fails. The rules are in `CLAUDE.md` ("Writing
+interface text"). The project is written in American English throughout.
+
+**Why.** Short text gets read; long text gets skipped, and the useful detail
+goes with it. The first version explained itself on screen (a permanent line of
+instructions under the roll, a download note in the sound menu).
+
+### 2026-10-08: quick-pick note colors
+
+**Choice.** `NOTE_COLORS` offers eight named colors (Magenta, Sky, Rose, Cyan,
+Amber, Lime, Violet, Neutral), each with a bright strength for dark themes and
+a deeper one for light themes, chosen automatically. Every built-in theme's own
+note color is one of them. The demo shows them as swatches beside a custom
+color picker.
+
+**Why.** Picking a color should take one click, and a color chosen on a dark
+theme should still read when the theme turns light.
 
 ## Open questions
 
