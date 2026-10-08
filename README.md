@@ -1,8 +1,9 @@
 # mei-piano-roll
 
 🎹 A piano roll player for MEI (Music Encoding Initiative) files. It reads an
-MEI file in the browser, draws its notes as a piano roll, plays them, and lists
-anything in the file it could not show faithfully.
+MEI file in the browser, draws its notes as a piano roll, plays them with a
+choice of synths or sampled instruments, makes still images of any bars, and
+lists anything in the file it could not show faithfully.
 
 ## Status
 
@@ -21,7 +22,8 @@ npm run dev
 ```
 
 Open the address it prints. The demo shows a built-in example; open any `.mei`
-file, or drop one on the page. The file stays in your browser.
+file, or drop one on the page. The file stays in your browser. Below the player,
+the **image maker** saves any bars as SVG or PNG.
 
 ## Use it in a React page
 
@@ -33,7 +35,22 @@ import { MeiPianoRoll } from 'mei-piano-roll'
 <MeiPianoRoll meiText={xml} height={320} onLoad={(score) => console.log(score.warnings)} />
 ```
 
-`parseNative(xml)` is exported too, for the note data without the player.
+| Prop | What it does |
+|---|---|
+| `src` / `meiText` | The MEI file, by address or as text |
+| `sound` | Starting sound, by id (see `SOUNDS`); default the square lead |
+| `theme` | `"studio"` (default), `"paper"`, `"neon"`, `"ink"`, or your own colours |
+| `accent` | Note colour; without it, the page's `--accent` CSS variable, then the theme's |
+| `height`, `pxPerBeat`, `bpm` | Size, starting zoom, tempo override |
+| `onLoad` | Called with the parsed score, warnings included |
+
+Also exported: `parseNative(xml)` for the note data without the player, and
+`rollToSvg(score, options)` for still images, which needs no browser, so a
+site's build can draw pictures straight from its files.
+
+Sampled instruments are FluidR3 GM by Frank Wen (CC BY 3.0), played by
+[smplr](https://github.com/danigb/smplr); the player credits them whenever one
+is in use.
 
 ## Checks
 
@@ -60,7 +77,9 @@ takes about two minutes. Its job is to show what breaks, not to pass; see
 | Path | What it is |
 |---|---|
 | `src/mei/` | The reader: MEI text in, note data and warnings out. No UI. |
-| `src/roll/` | The player component: draws on a canvas, plays with Web Audio. |
+| `src/roll/` | The player component (one canvas) and its colour themes. |
+| `src/audio/` | Sounds: the synth recipes, the sampled-instrument list, the engine that plays them. |
+| `src/render/` | Still images: SVG from a score, and PNG in the browser. |
 | `src/test/` | Unit tests, with short MEI snippets written for them. |
 | `demo/` | The demo page (`npm run dev`); not part of the library. |
 | `stress/` | The stress test (`npm run stress`). |

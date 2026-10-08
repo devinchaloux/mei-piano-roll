@@ -1,8 +1,9 @@
 # Decisions
 
-**Status (2026-10-07):** the project is set up and the native reader works.
-**Next action:** build the second reader (Verovio), which needs its dependency
-approved first, then compare the two readers on the sample files.
+**Status (2026-10-07):** the native reader works, and the player has a sound
+picker, colour themes and image export. **Next action:** several instruments in
+one roll (colour by part, or separate rolls), then annotations, then the second
+reader (Verovio) for any MEI file.
 
 Each decision gets: date, the choice, the alternatives rejected, and why, so it
 isn't re-litigated later. Entries are binding until a later entry reverses
@@ -112,6 +113,61 @@ with no warnings went from 0 to 35, wrong-meter warnings from 474 files to 8
 (the 8 really have no opening meter), and padded short bars from 367 to 139.
 An unflagged short bar is still padded and reported: it is more often an
 encoding slip than a pickup.
+
+### 2026-10-07: sounds: built-in synths first, sampled instruments on demand
+
+**Choice.** A sound picker with two kinds of sound:
+- **Synths** (12: square lead, saw lead, supersaw, pluck, rave stab, warm pad,
+  acid bass, sub bass, chiptune, organ, FM bell, sine), built from the
+  browser's own oscillators and filters as data recipes (`src/audio/synth.ts`).
+  Nothing to download. The square lead, the prototype's sound, stays the
+  default.
+- **Sampled instruments** (15, including piano and trumpet), played by the
+  `smplr` library (MIT) from the FluidR3 General MIDI recordings (CC BY 3.0,
+  credited under the roll whenever one is in use). Each is downloaded, about
+  2-3 MB, the first time it is chosen, and the library's own code loads only
+  then too.
+
+**Rejected.**
+- *Synths only:* no real piano or trumpet.
+- *The Musyng Kite recordings,* smplr's default: richer but under a share-alike
+  licence.
+- *Tone.js:* five times the size, for features the roll doesn't need.
+
+**Why.** The roll's first audience reads music as a producer does, so
+electronic sounds come first and cost nothing; real instruments are there when
+a piece needs them, and a page pays for them only when someone listens.
+
+**Known risk.** The recordings are fetched from a single volunteer-run GitHub
+site. Before the package is public, host a copy alongside it (smplr supports a
+custom address).
+
+### 2026-10-07: colour themes, and notes follow the page's accent
+
+**Choice.** Four themes for the roll's surface (`src/roll/themes.ts`): studio
+(the default, a dark DAW surface), paper (light), neon (high contrast) and ink
+(greyscale, for print), or any set of colours passed in. The note colour comes
+from the `accent` prop, else the page's `--accent` CSS variable, followed live,
+else the theme.
+
+**Why.** Following the page's variable means a site's theme or accent switch
+recolours the notes with no wrapper code; the prop and themes cover pages that
+have no such variable.
+
+### 2026-10-07: still images as SVG, made without a browser
+
+**Choice.** `rollToSvg(score, options)` draws any range of bars as SVG text:
+size, keyboard, bar numbers, note names, transparent background, theme and note
+colour are options. It needs no browser, so a site's build can draw pictures
+straight from the excerpt files. `svgToPng` makes a PNG in the browser. The
+player's Image button saves the bars in view; the demo page has a full image
+maker.
+
+**Rejected.** Exporting the canvas directly: canvas images are fixed-resolution
+and need a browser.
+
+**Why.** Pictures made from the real files can't drift from them, and SVG stays
+sharp at any size.
 
 ## Open questions
 

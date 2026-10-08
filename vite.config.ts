@@ -15,7 +15,9 @@ export default defineConfig({
     rollupOptions: {
       // React comes from the page that embeds the roll, never from this bundle:
       // two copies of React on one page break hooks.
-      external: ['react', 'react-dom', 'react/jsx-runtime'],
+      // smplr (the sample player) is a normal dependency: installed alongside,
+      // and still loaded only when a sampled sound is chosen (a dynamic import).
+      external: ['react', 'react-dom', 'react/jsx-runtime', 'smplr'],
     },
   },
   test: {

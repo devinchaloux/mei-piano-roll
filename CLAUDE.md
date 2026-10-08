@@ -46,8 +46,14 @@ code.
   quarter-note beats, plus **warnings** for anything the reader drops,
   simplifies or guesses. Every reader returns this one shape. No UI here, and it
   is unit-tested in `src/test/`.
-- **`src/roll/MeiPianoRoll.tsx`** only draws (one canvas) and plays (Web Audio)
-  what a reader returns, and lists the warnings under the roll.
+- **`src/roll/MeiPianoRoll.tsx`** only draws (one canvas) and plays what a
+  reader returns, and lists the warnings under the roll. Colours come from
+  `src/roll/themes.ts`.
+- **`src/audio/`** plays notes: synth sounds are data recipes in `synth.ts`;
+  sampled instruments come from `smplr`, imported only when one is chosen, so
+  pages using synths never load it.
+- **`src/render/svg.ts`** draws still images as SVG with no browser needed;
+  keep it in step with the canvas drawing when the roll's look changes.
 - A new gap the reader knows about gets a warning, not a silent skip: the
   stress test counts them across the sample files.
 
