@@ -22,8 +22,9 @@ npm run dev
 ```
 
 Open the address it prints. The demo shows a built-in example; open any `.mei`
-file, or drop one on the page. The file stays in your browser. Below the player,
-the **image maker** saves any bars as SVG or PNG.
+file, or drop one on the page. The file stays in your browser. Three tabs show
+the **full player**, the **compact player** as it sits in an essay, and the
+**image maker**, which saves any bars as SVG or PNG.
 
 The same demo is hosted on Vercel (`vercel.json`): `main` deploys it, and each
 pull request gets its own preview link. To build it yourself:
@@ -40,11 +41,15 @@ import { MeiPianoRoll } from 'mei-piano-roll'
 <MeiPianoRoll src="/music/example.mei" />
 // or, with the file's text already loaded:
 <MeiPianoRoll meiText={xml} height={320} onLoad={(score) => console.log(score.warnings)} />
+// in a page of text: one play button over the roll, a one-line caption
+<MeiPianoRoll src="/music/example.mei" variant="compact" />
 ```
 
 | Prop | What it does |
 |---|---|
 | `src` / `meiText` | The MEI file, by address or as text |
+| `variant` | `"full"` (default): the roll with its controls underneath. `"compact"`: one play button over the roll and a caption line; it opens into the full player |
+| `header` | Show the title line above the full player; default `true` |
 | `sound` | Starting sound, by id (see `SOUNDS`); default the square lead |
 | `theme` | `"studio"` (default), `"paper"`, `"neon"`, `"ink"`, or your own colors |
 | `accent` | Note color; without it, the page's `--accent` CSS variable, then the theme's |

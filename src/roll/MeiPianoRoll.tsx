@@ -43,6 +43,14 @@ export interface MeiPianoRollProps {
   theme?: ThemeName | RollTheme;
   /** Starting sound, by id (see SOUNDS). Default the square lead. */
   sound?: string;
+  /**
+   * "full" (default): the roll with its controls underneath. "compact": the roll
+   * with one play button over it and a one-line caption, for a page of text; it
+   * opens into the full player on request.
+   */
+  variant?: "full" | "compact";
+  /** Show the title line above the full player. Default true. */
+  header?: boolean;
   className?: string;
   /** Called with the parsed score (notes and warnings) each time a file loads. */
   onLoad?: (score: MeiScore) => void;
@@ -71,6 +79,17 @@ function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number,
   c.arcTo(x, y + h, x, y, r);
   c.arcTo(x, y, x + w, y, r);
   c.closePath();
+}
+
+// "Bar.beat" for the playhead, counting beats in the meter's own unit
+// (eighths in 6/8), from the reader's bar starts.
+function positionLabel(score: MeiScore, beat: number): string {
+  const bars = score.bars;
+  if (!bars.length) return "";
+  let i = bars.length - 1;
+  while (i > 0 && bars[i].start > beat + 1e-6) i--;
+  const beatLen = 4 / (score.meterUnit || 4);
+  return `${bars[i].label}.${Math.floor((beat - bars[i].start) / beatLen + 1e-6) + 1}`;
 }
 
 // Layout constants
@@ -115,6 +134,13 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   const [zoom, setZoom] = useState<number>(props.pxPerBeat ?? 64);
   const [loop, setLoop] = useState(false);
   const [warnings, setWarnings] = useState<MeiWarning[]>([]);
+  const [showWarnings, setShowWarnings] = useState(false);
+  // The compact player opens into the full one in place.
+  const [expanded, setExpanded] = useState(false);
+  const layout = props.variant === "compact" && !expanded ? "compact" : "full";
+  // Updated straight from the draw loop, so the readouts move without re-rendering.
+  const positionRef = useRef<HTMLSpanElement | null>(null);
+  const progressRef = useRef<HTMLDivElement | null>(null);
   const [soundId, setSoundId] = useState<string>(findSound(props.sound ?? DEFAULT_SOUND).id);
   const [soundStatus, setSoundStatus] = useState<SoundStatus>("ready");
   // Refs as well as state: the keyboard shortcuts are wired up once, on mount,
@@ -130,6 +156,8 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   useEffect(() => { bpmRef.current = bpm; }, [bpm]);
   useEffect(() => { pxRef.current = zoom; drawRef.current(); }, [zoom]);
   useEffect(() => { loopRef.current = loop; if (transportRef.current) transportRef.current.loop = loop; }, [loop]);
+  // Opening or closing the compact player swaps the readouts; fill the new ones.
+  useEffect(() => { drawRef.current(); }, [layout]);
 
   // ---- Colors ------------------------------------------------------------
   // Follow the page's --accent live: a site's theme or accent switch changes
@@ -253,13 +281,6 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   function togglePlay() {
     if (wantPlayRef.current) pause();
     else play();
-  }
-  function stop() {
-    pause();
-    transportRef.current?.stop();
-    tx.current.beat = 0;
-    tx.current.targetOffsetX = 0;
-    startLoopIfNeeded();
   }
   function seekToBeat(beat: number) {
     const score = scoreRef.current;
@@ -468,6 +489,9 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       ctx.moveTo(KEY_W + 0.5, 0);
       ctx.lineTo(KEY_W + 0.5, cssH);
       ctx.stroke();
+
+      if (positionRef.current) positionRef.current.textContent = positionLabel(score, t.beat);
+      if (progressRef.current) progressRef.current.style.width = `${score.totalBeats ? (t.beat / score.totalBeats) * 100 : 0}%`;
     };
     drawRef.current = draw;
 
@@ -616,85 +640,113 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     transportRef.current?.setTempo(v);
   };
 
+  const ready = status === "ready";
+  const sound = findSound(soundId);
+  const soundSelect = (
+    <select
+      className="mpr-select"
+      value={soundId}
+      onChange={(e) => onSoundChange(e.target.value)}
+      aria-label="Sound"
+      title="Sound. Instruments load the first time you choose them."
+    >
+      {(["Synth", "Instrument"] as const).map((group) => (
+        <optgroup key={group} label={group === "Synth" ? "Synths" : "Instruments"}>
+          {SOUNDS.filter((snd) => snd.group === group).map((snd) => (
+            <option key={snd.id} value={snd.id}>{snd.label}</option>
+          ))}
+        </optgroup>
+      ))}
+    </select>
+  );
+  // The roll never hides what it leaves out (docs/decisions.md).
+  const notShown = ready && warnings.length > 0 && (
+    <button
+      className="mpr-chip"
+      onClick={() => setShowWarnings((v) => !v)}
+      aria-expanded={showWarnings}
+      title="Parts of the file the roll can't show yet"
+    >
+      {warnings.length} not shown
+    </button>
+  );
+
   return (
-    <div ref={rootRef} className={"mpr-root " + (props.className || "")}>
+    <div ref={rootRef} className={`mpr-root mpr-${layout} ${props.className ?? ""}`}>
       <style>{CSS}</style>
-      <div className="mpr-header">
-        <span className="mpr-title">{meta?.title ?? "—"}</span>
-        {meta?.composer ? <span className="mpr-composer">· {meta.composer}</span> : null}
-        <span className="mpr-spacer" />
-        <span className="mpr-meta">{meta?.line ?? ""}</span>
+      {layout === "full" && props.header !== false && (
+        <div className="mpr-header">
+          <span className="mpr-title">{meta?.title ?? "—"}</span>
+          {meta?.composer ? <span className="mpr-composer">{meta.composer}</span> : null}
+          <span className="mpr-spacer" />
+          <span className="mpr-meta">{meta?.line ?? ""}</span>
+        </div>
+      )}
+
+      <div className="mpr-stage">
+        <canvas
+          ref={canvasRef}
+          className="mpr-canvas"
+          style={{ height, background: theme.background }}
+          tabIndex={0}
+          title="Drag or scroll to move. Click to set the playhead. Space plays; Home returns to the start."
+        />
+        {layout === "compact" && ready && !playing && (
+          <button className="mpr-overlay" onClick={togglePlay} aria-label="Play" title="Play (Space)">
+            <Icon name="play" size={26} />
+          </button>
+        )}
+        {layout === "compact" && <div className="mpr-progress"><div ref={progressRef} /></div>}
       </div>
 
-      <div className="mpr-toolbar">
-        <button
-          className="mpr-btn"
-          onClick={toStart}
-          disabled={status !== "ready"}
-          title="Back to start (Home)"
-          aria-label="Back to start"
-        >
-          ⏮
-        </button>
-        <button
-          className="mpr-btn mpr-primary"
-          onClick={togglePlay}
-          disabled={status !== "ready"}
-        >
-          {playing ? "⏸ Pause" : "▶ Play"}
-        </button>
-        <button className="mpr-btn" onClick={stop} disabled={status !== "ready"}>
-          ■ Stop
-        </button>
-        <label className="mpr-check">
-          <input type="checkbox" checked={loop} onChange={(e) => setLoop(e.target.checked)} /> Loop
-        </label>
-        <span className="mpr-ctl">
-          Tempo
-          <input
-            type="number"
-            min={20}
-            max={400}
-            value={bpm}
-            onChange={(e) => onBpmChange(parseFloat(e.target.value))}
-          />
-          bpm
-        </span>
-        <label className="mpr-ctl">
-          Sound
-          <select value={soundId} onChange={(e) => onSoundChange(e.target.value)} aria-label="Sound" title="Instruments load the first time you choose them">
-            {(["Synth", "Instrument"] as const).map((group) => (
-              <optgroup key={group} label={group === "Synth" ? "Synths" : "Instruments"}>
-                {SOUNDS.filter((snd) => snd.group === group).map((snd) => (
-                  <option key={snd.id} value={snd.id}>{snd.label}</option>
-                ))}
-              </optgroup>
-            ))}
-          </select>
-        </label>
-        <span className="mpr-ctl">
-          Zoom
-          <input
-            type="range"
-            min={28}
-            max={160}
-            step={2}
-            value={zoom}
-            onChange={(e) => setZoom(parseInt(e.target.value, 10))}
-          />
-        </span>
-        <button className="mpr-btn" onClick={saveImage} disabled={status !== "ready"} title="Save the visible bars as a PNG">
-          Image
-        </button>
-      </div>
-
-      <canvas
-        ref={canvasRef}
-        className="mpr-canvas"
-        style={{ height, background: theme.background }}
-        tabIndex={0}
-        title="Drag or scroll to move. Click to set the playhead. Space plays; Home returns to the start."
-      />
+      {layout === "full" ? (
+        <div className="mpr-bar">
+          <button className="mpr-icon" onClick={toStart} disabled={!ready} title="Back to start (Home)" aria-label="Back to start">
+            <Icon name="start" />
+          </button>
+          <button className="mpr-play" onClick={togglePlay} disabled={!ready} title={playing ? "Pause (Space)" : "Play (Space)"} aria-label={playing ? "Pause" : "Play"}>
+            <Icon name={playing ? "pause" : "play"} size={18} />
+          </button>
+          <button className="mpr-icon" onClick={() => setLoop((v) => !v)} aria-pressed={loop} title="Loop" aria-label="Loop">
+            <Icon name="loop" />
+          </button>
+          <span className="mpr-position" ref={positionRef} title="Bar and beat" />
+          <span className="mpr-spacer" />
+          {soundSelect}
+          <label className="mpr-tempo" title="Tempo">
+            <input type="number" min={20} max={400} value={bpm} aria-label="Tempo" onChange={(e) => onBpmChange(parseFloat(e.target.value))} />
+            BPM
+          </label>
+          <span className="mpr-zoom">
+            <button className="mpr-icon" onClick={() => setZoom((z) => clamp(Math.round(z / 1.25), 28, 160))} title="Zoom out" aria-label="Zoom out">
+              <Icon name="minus" />
+            </button>
+            <button className="mpr-icon" onClick={() => setZoom((z) => clamp(Math.round(z * 1.25), 28, 160))} title="Zoom in" aria-label="Zoom in">
+              <Icon name="plus" />
+            </button>
+          </span>
+          <button className="mpr-icon" onClick={saveImage} disabled={!ready} title="Save the visible bars as a PNG" aria-label="Save image">
+            <Icon name="image" />
+          </button>
+          {notShown}
+          {props.variant === "compact" && (
+            <button className="mpr-icon" onClick={() => setExpanded(false)} title="Back to the small player" aria-label="Back to the small player">
+              <Icon name="collapse" />
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="mpr-foot">
+          <span className="mpr-title">{meta?.title ?? ""}</span>
+          <span className="mpr-spacer" />
+          {soundSelect}
+          <span className="mpr-meta">{bpm} BPM</span>
+          {notShown}
+          <button className="mpr-icon" onClick={() => setExpanded(true)} title="Open the full player" aria-label="Open the full player">
+            <Icon name="expand" />
+          </button>
+        </div>
+      )}
 
       {/* Only what needs saying: loading, and errors. How to use the roll is in
           the canvas tooltip. */}
@@ -702,67 +754,104 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         <div className={"mpr-status" + (status === "error" || soundStatus === "error" ? " mpr-error" : "")}>
           {status === "loading" && "Loading…"}
           {status === "error" && errMsg}
-          {status === "ready" && soundStatus === "loading" && `Loading ${findSound(soundId).label}…`}
-          {status === "ready" && soundStatus === "error" && `Couldn't load ${findSound(soundId).label}. Try again or choose a synth.`}
+          {ready && soundStatus === "loading" && `Loading ${sound.label}…`}
+          {ready && soundStatus === "error" && `Couldn't load ${sound.label}. Try again or choose a synth.`}
         </div>
       )}
-      {findSound(soundId).kind === "sampled" && <div className="mpr-credit">{SAMPLE_CREDIT}</div>}
-
-      {/* The roll never hides what it leaves out (docs/decisions.md). */}
-      {status === "ready" && warnings.length > 0 && (
-        <details className="mpr-warnings">
-          <summary title="Parts of the file the roll can't show yet">Not shown ({warnings.length})</summary>
-          <ul>
-            {warnings.map((w) => (
-              <li key={w.code}>
-                {w.message}
-                {w.count > 1 ? ` (${w.count}×)` : ""}
-              </li>
-            ))}
-          </ul>
-        </details>
+      {showWarnings && ready && warnings.length > 0 && (
+        <ul className="mpr-warnings">
+          {warnings.map((w) => (
+            <li key={w.code}>
+              {w.message}
+              {w.count > 1 ? ` (${w.count}×)` : ""}
+            </li>
+          ))}
+        </ul>
       )}
+      {sound.kind === "sampled" && <div className="mpr-credit">{SAMPLE_CREDIT}</div>}
     </div>
   );
 }
 
+// ── Icons ──
+// Drawn inline so the player needs no icon font or image files.
 
-/* Chrome styling spends the SITE's tokens (with the original POC values as
-   fallbacks for any host page without tokens.css). The canvas interior keeps
-   its own fixed dark palette deliberately: a piano roll is a DAW surface, and
-   DAWs are dark in both site themes — it reads as an instrument, not a page.
-   Notes are the one canvas element painted with the live site accent. */
+type IconName = "play" | "pause" | "start" | "loop" | "minus" | "plus" | "image" | "expand" | "collapse";
+
+function Icon({ name, size = 16 }: { name: IconName; size?: number }) {
+  const solid = name === "play" || name === "pause";
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      aria-hidden="true"
+      fill={solid ? "currentColor" : "none"}
+      stroke={solid ? "none" : "currentColor"}
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {name === "play" && <path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.5-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5z" />}
+      {name === "pause" && <><rect x="6" y="5" width="4" height="14" rx="1" /><rect x="14" y="5" width="4" height="14" rx="1" /></>}
+      {name === "start" && <path d="M6 5v14M19 5l-9 7 9 7z" />}
+      {name === "loop" && <path d="M17 2l3 3-3 3M4 11V9a4 4 0 0 1 4-4h12M7 22l-3-3 3-3M20 13v2a4 4 0 0 1-4 4H4" />}
+      {name === "minus" && <path d="M5 12h14" />}
+      {name === "plus" && <path d="M12 5v14M5 12h14" />}
+      {name === "image" && <><rect x="3" y="4" width="18" height="16" rx="2" /><circle cx="9" cy="10" r="2" /><path d="M21 16l-5-5-9 9" /></>}
+      {name === "expand" && <path d="M14 4h6v6M10 20H4v-6M20 4l-7 7M4 20l7-7" />}
+      {name === "collapse" && <path d="M4 14h6v6M20 10h-6V4M14 10l7-7M10 14l-7 7" />}
+    </svg>
+  );
+}
+
+
+/* Chrome styling spends the SITE's tokens (with fallbacks for a host page
+   without them). The canvas interior keeps its own palette from the theme: a
+   piano roll is a DAW surface and reads as an instrument, not a page. Notes are
+   the one canvas element painted with the page's accent. */
 const CSS = `
 .mpr-root {
   --mpr-panel: var(--surface, #141823); --mpr-panel2: var(--surface-2, #1b2030); --mpr-border: var(--border, #232a3b);
   --mpr-text: var(--text-strong, #e7ecf5); --mpr-muted: var(--text-muted, #8b95ad); --mpr-accent: var(--accent, #4f8cff);
   font: 13px/1.4 var(--font-mono, ui-monospace, Menlo, Consolas, monospace);
   color: var(--mpr-text); background: var(--mpr-panel);
-  border: 1px solid var(--mpr-border); border-radius: var(--radius, 12px); overflow: hidden;
-  box-shadow: var(--shadow, 0 10px 40px rgba(0,0,0,.35));
+  border: 1px solid var(--mpr-border); border-radius: var(--radius, 10px); overflow: hidden;
 }
-.mpr-header { display: flex; align-items: baseline; gap: 10px; padding: 14px 16px 10px; border-bottom: 1px solid var(--mpr-border); }
-.mpr-title { font-size: 15px; font-weight: 650; }
-.mpr-composer { color: var(--mpr-muted); }
+.mpr-full { box-shadow: var(--shadow, 0 10px 40px rgba(0,0,0,.35)); }
+.mpr-header { display: flex; align-items: baseline; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--mpr-border); }
+.mpr-title { font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.mpr-composer, .mpr-meta { color: var(--mpr-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mpr-spacer { flex: 1; }
-.mpr-meta { color: var(--mpr-muted); font-size: 12px; font-variant-numeric: tabular-nums; }
-.mpr-toolbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 16px; background: var(--mpr-panel2); border-bottom: 1px solid var(--mpr-border); }
-.mpr-btn { appearance: none; border: 1px solid var(--mpr-border); color: var(--mpr-text); background: var(--mpr-panel); border-radius: 8px; padding: 7px 13px; font: inherit; font-weight: 550; cursor: pointer; transition: background .12s, border-color .12s; }
-.mpr-btn:hover:not(:disabled) { border-color: var(--mpr-muted); }
-.mpr-btn:disabled { opacity: .5; cursor: default; }
-.mpr-primary { background: var(--mpr-accent); border-color: transparent; color: var(--accent-ink, #fff); }
-.mpr-primary:hover:not(:disabled) { filter: brightness(1.08); }
-.mpr-check { display: flex; align-items: center; gap: 6px; color: var(--mpr-muted); cursor: pointer; user-select: none; }
-.mpr-ctl { display: flex; align-items: center; gap: 6px; color: var(--mpr-muted); }
-.mpr-ctl input[type="range"] { width: 110px; accent-color: var(--mpr-accent); }
-.mpr-ctl input[type="number"] { width: 60px; background: var(--mpr-panel); color: var(--mpr-text); border: 1px solid var(--mpr-border); border-radius: 6px; padding: 5px 7px; font: inherit; }
+.mpr-stage { position: relative; }
 .mpr-canvas { display: block; width: 100%; touch-action: none; outline: none; }
 .mpr-canvas:focus-visible { box-shadow: inset 0 0 0 2px var(--mpr-accent); }
-.mpr-status { padding: 10px 16px; color: var(--mpr-muted); font-size: 12px; }
+
+.mpr-bar, .mpr-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--mpr-border); }
+.mpr-foot { gap: 12px; padding: 8px 12px; }
+.mpr-icon { appearance: none; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--mpr-border); background: transparent; color: var(--mpr-text); cursor: pointer; padding: 0; }
+.mpr-foot .mpr-icon { width: 30px; height: 30px; }
+.mpr-icon:hover:not(:disabled) { border-color: var(--mpr-muted); }
+.mpr-icon[aria-pressed="true"] { border-color: var(--mpr-accent); color: var(--mpr-accent); background: color-mix(in srgb, var(--mpr-accent) 14%, transparent); }
+.mpr-play { appearance: none; width: 44px; height: 44px; border-radius: 50%; border: none; background: var(--mpr-accent); color: var(--accent-ink, #fff); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; }
+.mpr-play:hover:not(:disabled) { filter: brightness(1.08); }
+.mpr-icon:disabled, .mpr-play:disabled { opacity: .5; cursor: default; }
+.mpr-position { min-width: 44px; font-size: 14px; font-variant-numeric: tabular-nums; }
+.mpr-select, .mpr-tempo input { background: var(--mpr-panel2); color: var(--mpr-text); border: 1px solid var(--mpr-border); border-radius: 8px; height: 34px; padding: 0 8px; font: inherit; }
+.mpr-foot .mpr-select { height: 28px; background: transparent; color: var(--mpr-muted); font-size: 12px; }
+.mpr-tempo { display: inline-flex; align-items: center; gap: 6px; color: var(--mpr-muted); font-size: 12px; }
+.mpr-tempo input { width: 62px; box-sizing: border-box; }
+.mpr-zoom { display: inline-flex; gap: 4px; }
+.mpr-chip { appearance: none; height: 28px; padding: 0 9px; border-radius: 5px; border: 1px solid var(--mpr-border); background: transparent; color: var(--mpr-muted); font: inherit; font-size: 12px; cursor: pointer; white-space: nowrap; }
+.mpr-chip[aria-expanded="true"] { color: var(--mpr-text); border-color: var(--mpr-muted); }
+
+.mpr-overlay { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: 64px; height: 64px; border-radius: 50%; border: none; background: var(--mpr-accent); color: var(--accent-ink, #fff); display: flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; box-shadow: 0 6px 24px rgba(0,0,0,.45); }
+.mpr-overlay:hover { filter: brightness(1.08); }
+.mpr-progress { position: absolute; left: 0; right: 0; bottom: 0; height: 3px; background: color-mix(in srgb, var(--mpr-muted) 25%, transparent); pointer-events: none; }
+.mpr-progress > div { height: 100%; width: 0; background: var(--mpr-accent); }
+
+.mpr-status { padding: 8px 14px; color: var(--mpr-muted); font-size: 12px; border-top: 1px solid var(--mpr-border); }
 .mpr-error { color: #ff8a8a; }
-.mpr-credit { padding: 0 16px 10px; color: var(--mpr-muted); font-size: 11px; opacity: .8; }
-.mpr-ctl select { background: var(--mpr-panel); color: var(--mpr-text); border: 1px solid var(--mpr-border); border-radius: 6px; padding: 5px 7px; font: inherit; }
-.mpr-warnings { padding: 0 16px 12px; color: var(--mpr-muted); font-size: 12px; }
-.mpr-warnings summary { cursor: pointer; }
-.mpr-warnings ul { margin: 6px 0 0; padding-left: 18px; }
+.mpr-warnings { margin: 0; padding: 8px 14px 10px 32px; color: var(--mpr-muted); font-size: 12px; border-top: 1px solid var(--mpr-border); }
+.mpr-credit { padding: 0 14px 8px; color: var(--mpr-muted); font-size: 11px; opacity: .8; }
 `;

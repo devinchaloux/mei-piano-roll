@@ -225,6 +225,26 @@ queue alone, so pausing, or switching instrument, kept the old notes playing.
 **Why.** It is how players stay responsive: nothing is committed further ahead
 than the lookahead, so every control acts at once.
 
+### 2026-10-08: two player layouts, and a studio page for the demo
+
+**Choice.** The player comes in two layouts. The full player puts the controls
+in one bar under the roll: back to start, play/pause, loop, the position as
+bar and beat, then sound, tempo, zoom, image and the "not shown" list. The
+compact player, for essays, shows the roll with one play button over it, a thin
+progress line, and a caption with the title and sound; it opens into the full
+player in place. The demo became a studio page: a side panel for the file and
+the look, and tabs for the full player, the compact player and the image maker.
+Only the open tab's player exists, so two can never play at once.
+
+**Rejected.** Controls above the roll (the first version), which put a row of
+settings between the title and the music; and a media-player bar with the
+settings in a pop-up, which hid the sound and tempo that producers change most.
+A separate Stop button: back to start and pause cover it.
+
+**Why.** The roll is the point, so the controls sit under it, as in a DAW's
+transport. Essays need the music without the machinery; the studio page is
+where the machinery lives.
+
 ## Open questions
 
 | Question | Options |
