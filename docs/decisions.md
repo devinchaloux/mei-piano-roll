@@ -1,7 +1,8 @@
 # Decisions
 
 **Status (2026-10-08):** the native reader works, and the player has a sound
-picker, color themes, image export and several instruments in one roll.
+picker, color themes, image export and several instruments in one roll. Tied
+notes sound once and grace notes play before their beat.
 **Next action:** annotations, then the second reader (Verovio) for any MEI
 file.
 
@@ -298,6 +299,46 @@ mute, solo and a color per track are how a DAW shows several instruments.
 Lanes are not decoration: a wide score on one roll leaves a few pixels per
 semitone. On the 617 sample files, 310 read as more than one part, and the
 stress test's totals did not change.
+
+### 2026-10-08: tied notes sound once, as one note
+
+**Choice.** A tied chain becomes one note on the roll, as long as the whole
+chain, and it sounds once. The reader finds a tie from a `<tie>` element (by
+the notes it names, or, if it names only one end, the note of the same pitch
+in the same part that meets it) or from a note marked `tie="i"` or `"m"`,
+which continues into the next note of the same pitch in the same part,
+starting where it ends. A chord's `tie` applies to each of its notes. A tie
+whose other end can't be found is reported, and its notes play as written.
+
+**Rejected.**
+- *One long note with a faint line where the written notes meet:* the bar
+  lines already show where they fall.
+- *Two notes drawn, played as one sound:* the roll would show two attacks
+  where one is heard.
+
+**Why.** A tie is one sound, and a piano roll shows sounds, as a recording or
+MIDI file would. Ties were the most common gap in the sample files (322 files);
+after this, 64 still report a tie the reader can't follow, mostly where the
+encoding marks a tie with no matching note after it.
+
+### 2026-10-08: grace notes play just before the beat
+
+**Choice.** A grace note plays just before the note it leads into, taking its
+time from the note before, so the beat stays where it is written. It takes its
+written length, but a run of grace notes takes at most half the time since the
+note before, so that note is never swallowed. A grace note with no written
+length, or with no time before it (at the very start of a part), is left out
+and reported. All grace notes are placed this way, including those MEI marks
+as accented (`grace="acc"`), which some performers play on the beat.
+
+**Rejected.**
+- *Leaving them off,* as before: the roll would drop notes that are heard.
+- *On the beat, taking time from the main note:* it moves the written beat.
+
+**Why.** It is how playback software usually performs them. Grace notes were
+left out of 168 sample files; after this, 21 still report one it can't place.
+With ties and grace notes handled, the files read with nothing left out went
+from 35 to 144 of 617.
 
 ## Open questions
 
