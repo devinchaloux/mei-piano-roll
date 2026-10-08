@@ -26,8 +26,7 @@ file, or drop one on the page. The file stays in your browser. Below the player,
 the **image maker** saves any bars as SVG or PNG.
 
 The same demo is hosted on Vercel (`vercel.json`): `main` deploys it, and each
-pull request gets its own preview link. For now the deployments ask the viewer
-to sign in to the project's Vercel account. To build it yourself:
+pull request gets its own preview link. To build it yourself:
 
 ```bash
 npm run build:demo   # static site in dist-demo/
