@@ -33,6 +33,13 @@ export interface LaneOptions {
 /** The shortest a lane gets on screen; the player grows taller rather than squeeze lanes below it. */
 export const MIN_LANE_HEIGHT = 56
 
+/**
+ * The shortest a pitch row gets in a separated lane, in pixels. A string
+ * quartet's cello spans three octaves and more; in a 56-pixel lane each
+ * semitone would be under two pixels and its notes slivers.
+ */
+export const MIN_ROW_HEIGHT = 4
+
 function range(notes: MeiNote[], pad: number): { lo: number; hi: number } {
   if (!notes.length) return { lo: 60, hi: 72 }
   let lo = Infinity, hi = -Infinity
@@ -58,6 +65,16 @@ export function layoutLanes(notes: MeiNote[], o: LaneOptions): Lane[] {
     top: o.top + i * (h + gap),
     height: h,
   }))
+}
+
+/** The most pitch rows any one part needs in a lane of its own. */
+export function widestLaneRows(notes: MeiNote[], pitchPadding = 1): number {
+  let rows = 0
+  for (const p of new Set(notes.map((n) => n.part))) {
+    const r = range(notes.filter((n) => n.part === p), pitchPadding)
+    rows = Math.max(rows, r.hi - r.lo + 1)
+  }
+  return rows
 }
 
 /** How many lanes a separated view of these notes needs. */

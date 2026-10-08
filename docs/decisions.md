@@ -270,7 +270,9 @@ where the machinery lives.
   overrides them.
 - **One roll or lanes.** All parts share one roll by default. A toggle gives
   each part its own lane, fitted to its own pitch range, labeled, and the
-  player grows taller rather than squeeze a lane below 56 px. The canvas and
+  player grows taller rather than squeeze a lane below 56 px, or a pitch row
+  below 4 px (`MIN_ROW_HEIGHT`): a quartet's cello spans more than three
+  octaves, and at 56 px its notes were slivers. The canvas and
   `rollToSvg` both lay out through `src/roll/lanes.ts`, so a saved image
   matches the screen.
 - **Mute, solo and a sound per part.** Each part has its own audio channel.
@@ -283,7 +285,10 @@ where the machinery lives.
 - **Starting sounds.** A part starts with the nearest sound to the instrument
   the file names: by General MIDI program when an `<instrDef>` gives one,
   else by words in its name, in English, Italian and German
-  (`src/audio/instruments.ts`). "Bass" alone matches nothing (a voice or a
+  (`src/audio/instruments.ts`). A staff with no name of its own takes one from
+  the header's performer list (`<perfRes n="1">Violin I</perfRes>`), but only
+  when that list numbers exactly the score's staves, so a list of another shape
+  never names the wrong staff. "Bass" alone matches nothing (a voice or a
   double bass). A `sound` prop sets every part's starting sound instead.
 
 **Rejected.**
@@ -343,6 +348,39 @@ as accented (`grace="acc"`), which some performers play on the beat.
 left out of 168 sample files; after this, 21 still report one it can't place.
 With ties and grace notes handled, the files read with nothing left out went
 from 35 to 144 of 617.
+
+### 2026-10-08: tremolos play as the notes they stand for
+
+**Choice.** A measured tremolo is shorthand for repeated notes, so the reader
+writes them out: a `<bTrem>` repeats its note or chord, a `<fTrem>` alternates
+between its two, each stroke one unit long, and the whole lasts as long as one
+written note. The unit is `@unitdur` (or MEI 3's `@measperf`), else what the
+slashes through a stem or the beams between a pair mean: one slash through a
+quarter means eighths. A stated unit no shorter than the note can't be right
+(one sample file gives a whole note for a dotted quarter), so the next source
+is tried. A tremolo with no unit at all is unmeasured, "as fast as possible",
+and plays held, with a warning. A tie out of a tremolo leaves from its last
+stroke.
+
+**Rejected.** Reading a tremolo as a plain container, as before: a `<bTrem>`
+became one held chord, and a `<fTrem>` played both its notes at full length,
+one after the other, pushing the rest of the bar late.
+
+**Why.** The maintainer asked for Erlkönig's tremolo to read properly
+(2026-10-08): its piano part is repeated triplet chords, written as tremolos,
+and the roll showed one held chord per beat.
+
+### 2026-10-08: more string sounds, and the metronome mark as a tempo
+
+**Choice.** Viola, double bass and pizzicato strings join the sampled
+instruments, and General MIDI programs and instrument names map to them
+("Viola", "Bratsche", "Kontrabass", "pizz."). The tempo comes from `midi.bpm`
+first, then from the metronome mark (`mm`, counted in `mm.unit`, so a dotted
+quarter at 60 is 90 quarter notes a minute), then 120.
+
+**Why.** A string quartet played a viola part on a violin and a cello part on
+the default synth. Many files give only the metronome mark, and played at 120
+regardless.
 
 ## Open questions
 

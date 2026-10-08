@@ -255,3 +255,59 @@ describe('parseNative: grace notes', () => {
     expect(s.warnings.map((w) => w.code)).toContain('grace-start')
   })
 })
+
+// ── Tremolos ──
+
+describe('parseNative: tremolos', () => {
+  it('plays a measured bTrem as the repeated notes it stands for', () => {
+    // A dotted-quarter chord in a triplet, tremolo in eighths: three triplet eighths in one beat.
+    const s = parseNative(mei('<tuplet num="3" numbase="2"><bTrem unitdur="8"><chord dur="4" dots="1"><note pname="g" oct="3"/><note pname="g" oct="4"/></chord></bTrem></tuplet><rest dur="4"/><rest dur="2"/>'))
+    const g3 = s.notes.filter((n) => n.name === 'G3')
+    expect(g3.map((n) => n.start)).toEqual([0, 1 / 3, 2 / 3].map((x) => expect.closeTo(x)))
+    expect(g3.every((n) => Math.abs(n.dur - 1 / 3) < 1e-9)).toBe(true)
+    expect(s.notes).toHaveLength(6)
+    expect(s.warnings).toEqual([])
+  })
+
+  it('reads the unit from slashes when there is no unitdur', () => {
+    // A quarter note with two slashes: four sixteenths.
+    const s = parseNative(mei('<bTrem><note pname="c" oct="4" dur="4" stem.mod="2slash"/></bTrem><rest dur="4"/><rest dur="2"/>'))
+    expect(s.notes.map((n) => n.start)).toEqual([0, 0.25, 0.5, 0.75])
+  })
+
+  it('alternates a fTrem in the time of one of its notes', () => {
+    const s = parseNative(mei('<fTrem unitdur="8"><note pname="c" oct="4" dur="2"/><note pname="e" oct="4" dur="2"/></fTrem><note pname="g" oct="4" dur="2"/>'))
+    expect(s.notes.map((n) => [n.name, n.start])).toEqual([
+      ['C4', 0], ['E4', 0.5], ['C4', 1], ['E4', 1.5], ['G4', 2],
+    ])
+  })
+
+  it('holds an unmeasured tremolo and says so', () => {
+    const s = parseNative(mei('<bTrem><note pname="c" oct="4" dur="2"/></bTrem><rest dur="2"/>'))
+    expect(s.notes.map((n) => [n.start, n.dur])).toEqual([[0, 2]])
+    expect(codes(mei('<bTrem><note pname="c" oct="4" dur="2"/></bTrem><rest dur="2"/>'))).toContain('tremolo-unmeasured')
+  })
+
+  it('ties out of a tremolo from its last stroke only', () => {
+    const s = parseNative(mei('<bTrem unitdur="8"><note pname="c" oct="4" dur="2" tie="i"/></bTrem><note pname="c" oct="4" dur="2" tie="t"/>'))
+    expect(s.notes.map((n) => [n.start, n.dur])).toEqual([[0, 0.5], [0.5, 0.5], [1, 0.5], [1.5, 2.5]])
+  })
+})
+
+describe('parseNative: tempo', () => {
+  it('reads a metronome mark when there is no playback tempo', () => {
+    expect(parseNative(mei('<note pname="c" oct="4" dur="1"/>', 'meter.count="4" meter.unit="4"').replace('<scoreDef>', '<scoreDef mm="152">')).bpm).toBe(152)
+    expect(parseNative(mei('<note pname="c" oct="4" dur="1"/>').replace('<scoreDef>', '<scoreDef mm="60" mm.unit="4" mm.dots="1">')).bpm).toBe(90)
+  })
+
+  it('prefers midi.bpm to the metronome mark', () => {
+    expect(parseNative(mei('<note pname="c" oct="4" dur="1"/>').replace('<scoreDef>', '<scoreDef mm="152" midi.bpm="100">')).bpm).toBe(100)
+  })
+})
+
+describe('parseNative: tremolo units that cannot be right', () => {
+  it('falls back to the slashes when the stated unit is longer than the note', () => {
+    const s = parseNative(mei('<bTrem measperf="1"><note pname="c" oct="4" dur="4" stem.mod="1slash"/></bTrem><rest dur="4"/><rest dur="2"/>'))
+    expect(s.notes.map((n) => n.start)).toEqual([0, 0.5])
+  })
+})

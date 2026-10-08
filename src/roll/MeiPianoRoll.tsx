@@ -7,7 +7,7 @@ import { SOUNDS, DEFAULT_SOUND, SAMPLE_CREDIT, findSound } from "../audio/sounds
 import { soundForPart } from "../audio/instruments";
 import { resolveTheme, shade, type RollTheme, type ThemeName } from "./themes";
 import { partColors as defaultPartColors } from "./noteColors";
-import { layoutLanes, MIN_LANE_HEIGHT, type Lane } from "./lanes";
+import { layoutLanes, widestLaneRows, MIN_LANE_HEIGHT, MIN_ROW_HEIGHT, type Lane } from "./lanes";
 import { rollToSvg } from "../render/svg";
 import { svgToPng, downloadBlob } from "../render/toPng";
 
@@ -82,7 +82,8 @@ function startingSounds(parts: MeiPart[], pageSound: string | undefined): string
 }
 const unique = <T,>(xs: T[]) => [...new Set(xs)];
 function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
-  r = Math.min(r, w / 2, h / 2);
+  // The canvas throws on a negative radius, which a very thin note would give.
+  r = Math.max(0, Math.min(r, w / 2, h / 2));
   c.beginPath();
   c.moveTo(x + r, y);
   c.arcTo(x + w, y, x + w, y + h, r);
@@ -158,6 +159,8 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
 
   // ---- Parts ---------------------------------------------------------------
   const [parts, setParts] = useState<MeiPart[]>([]);
+  // The widest part's pitch range, in rows: sets how tall separated lanes must be.
+  const [laneRows, setLaneRows] = useState(0);
   const [separate, setSeparate] = useState<boolean>(!!props.separateParts);
   const [muted, setMuted] = useState<Set<number>>(() => new Set());
   const [soloed, setSoloed] = useState<Set<number>>(() => new Set());
@@ -375,6 +378,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         engineRef.current?.setPartCount(score.parts.length);
         // Each part starts with its own sound, unmuted.
         setParts(score.parts);
+        setLaneRows(widestLaneRows(score.notes));
         setMuted(new Set());
         setSoloed(new Set());
         partSoundsRef.current = startingSounds(score.parts, props.sound);
@@ -509,7 +513,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
           const w = Math.max(2, n.dur * px - 2);
           if (x + w < KEY_W || x > cssW) continue;
           const y = yFor(n.midi);
-          const h = noteH - 2;
+          const h = Math.max(1, noteH - 2);
           const on = audible[n.part] ?? true;
           const active = on && !!transportRef.current?.playing && t.beat >= n.start - 1e-6 && t.beat < n.start + n.dur - 1e-6;
           const color = colors[n.part] ?? colors[0];
@@ -751,7 +755,8 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
 
   const ready = status === "ready";
   // Separated, the roll grows rather than squeeze each lane below a readable height.
-  const canvasHeight = separate && multi ? Math.max(height, RULER_H + parts.length * (MIN_LANE_HEIGHT + 6)) : height;
+  const laneHeight = Math.max(MIN_LANE_HEIGHT, laneRows * MIN_ROW_HEIGHT);
+  const canvasHeight = separate && multi ? Math.max(height, RULER_H + parts.length * (laneHeight + 6)) : height;
   const soundLabels = soundLoad.ids.map((id) => findSound(id).label).join(", ");
   const soundSelect = (part: number) => (
     <select

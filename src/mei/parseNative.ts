@@ -174,7 +174,7 @@ interface LayerEnv {
 }
 
 // A chord's tie applies to every note in it that has none of its own.
-function pushNote(n: Element, start: number, beats: number, env: LayerEnv, chordTie: string | null = null): MeiNote | null {
+function pushNote(n: Element, start: number, beats: number, env: LayerEnv, chordTie: string | null = null, tieStart = true): MeiNote | null {
   const midi = noteToMidi(n, env.keysig)
   if (midi === null) {
     env.warn.add('no-pitch', 'Notes without a pitch are left out.')
@@ -186,8 +186,16 @@ function pushNote(n: Element, start: number, beats: number, env: LayerEnv, chord
   if (id && !env.ties.byId.has(id)) env.ties.byId.set(id, note)
   // MEI's tie attribute: i starts a tie, m continues one, t ends it.
   const tie = n.getAttribute('tie') ?? chordTie
-  if (tie === 'i' || tie === 'm') env.ties.starts.add(note)
+  if (tieStart && (tie === 'i' || tie === 'm')) env.ties.starts.add(note)
   return note
+}
+
+// Sounds a note, or every note of a chord, and remembers it as the last struck.
+function sound(el: Element, start: number, beats: number, env: LayerEnv, tieStart = true): void {
+  const struck = el.localName === 'chord'
+    ? childrenNamed(el, 'note').map((n) => pushNote(n, start, beats, env, el.getAttribute('tie'), tieStart))
+    : [pushNote(el, start, beats, env, null, tieStart)]
+  strike(struck, start, env)
 }
 
 function strike(notes: (MeiNote | null)[], start: number, env: LayerEnv): void {
@@ -243,8 +251,10 @@ function walkLayer(node: Element, ctx: { t: number }, env: LayerEnv, scale: numb
   for (const raw of Array.from(node.children)) {
     const child = env.resolve(raw)
     const tag = child.localName
-    if (tag === 'beam' || tag === 'bTrem' || tag === 'fTrem') {
+    if (tag === 'beam') {
       walkLayer(child, ctx, env, scale, inGrace)
+    } else if ((tag === 'bTrem' || tag === 'fTrem') && !inGrace) {
+      walkTremolo(child, ctx, env, scale)
     } else if (tag === 'graceGrp') {
       walkLayer(child, ctx, env, scale, true)
     } else if (tag === 'tuplet') {
@@ -258,12 +268,8 @@ function walkLayer(node: Element, ctx: { t: number }, env: LayerEnv, scale: numb
         continue
       }
       placeGraces(ctx.t, env)
-      const isChord = tag === 'chord'
-      const beats = durToBeats(isChord ? durSourceOf(child) : child, scale, env.warn)
-      const struck = isChord
-        ? childrenNamed(child, 'note').map((n) => pushNote(n, ctx.t, beats, env, child.getAttribute('tie')))
-        : [pushNote(child, ctx.t, beats, env)]
-      strike(struck, ctx.t, env)
+      const beats = durToBeats(tag === 'chord' ? durSourceOf(child) : child, scale, env.warn)
+      sound(child, ctx.t, beats, env)
       ctx.t += beats
     } else if (tag === 'rest' || tag === 'space' || tag === 'mRest' || tag === 'mSpace' || tag === 'multiRest') {
       placeGraces(ctx.t, env)
@@ -277,6 +283,62 @@ function walkLayer(node: Element, ctx: { t: number }, env: LayerEnv, scale: numb
       env.warn.add(`skipped:${tag}`, `<${tag}> is not shown.`)
     }
   }
+}
+
+// ── Tremolos ──
+// A measured tremolo is shorthand for notes written out in full, so it plays
+// as those notes: a bTrem repeats its note or chord, a fTrem alternates between
+// its two, each time for one unit. The unit is the encoding's @unitdur (or
+// MEI 3's @measperf), else what the slashes or beams through the stems mean.
+// The whole tremolo lasts as long as one of its written notes. A tremolo with
+// no unit to go by is unmeasured, "as fast as possible", and plays held.
+
+// The repeated unit, in beats, or null for an unmeasured tremolo. A unit no
+// shorter than the tremolo itself can't be right (one file gives measperf="1",
+// a whole note, for a dotted quarter), so the next source is tried.
+function tremoloUnit(trem: Element, first: Element, span: number, scale: number): number | null {
+  const fromValue = (attr: string) => {
+    const unit = parseFloat(trem.getAttribute(attr) ?? '')
+    return unit > 0 ? (4 / unit) * scale : null
+  }
+  // One slash (or tremolo beam) halves the note's own shortest value: through a
+  // quarter or longer, one slash means eighths; through an eighth, sixteenths.
+  const fromMarks = () => {
+    const marks = trem.localName === 'bTrem'
+      ? parseInt(/^(\d)slash$/.exec(first.getAttribute('stem.mod') ?? trem.getAttribute('stem.mod') ?? '')?.[1] ?? '', 10)
+      : parseInt(trem.getAttribute('beams') ?? '', 10)
+    if (!(marks > 0)) return null
+    const dur = parseInt(durSourceOf(first).getAttribute('dur') ?? '', 10)
+    const flags = dur >= 8 ? Math.log2(dur) - 2 : 0
+    // A fTrem's beams include the notes' own; a bTrem's slashes come on top of its flags.
+    const total = trem.localName === 'fTrem' ? Math.max(marks, flags + 1) : flags + marks
+    return (4 / 2 ** (total + 2)) * scale
+  }
+  for (const unit of [fromValue('unitdur'), fromValue('measperf'), fromMarks()]) {
+    if (unit !== null && unit < span - 1e-9) return unit
+  }
+  return null
+}
+
+function walkTremolo(trem: Element, ctx: { t: number }, env: LayerEnv, scale: number): void {
+  const items = Array.from(trem.children).map(env.resolve).filter((el) => el.localName === 'note' || el.localName === 'chord')
+  const pair = trem.localName === 'fTrem'
+  if (!items.length || (pair && items.length !== 2)) {
+    walkLayer(trem, ctx, env, scale)
+    return
+  }
+  placeGraces(ctx.t, env)
+  const span = durToBeats(durSourceOf(items[0]), scale, env.warn)
+  const unit = tremoloUnit(trem, items[0], span, scale)
+  // Unmeasured: one held note, or the pair's two halves.
+  const count = unit ? Math.max(1, Math.round(span / unit)) : pair ? 2 : 1
+  if (!unit) env.warn.add('tremolo-unmeasured', 'Unmeasured tremolos play as held notes.')
+  const step = span / count
+  for (let i = 0; i < count; i++) {
+    // A tie out of the tremolo leaves from its last stroke only.
+    sound(pair ? items[i % 2] : items[0], ctx.t + i * step, step, env, i === count - 1)
+  }
+  ctx.t += span
 }
 
 // ── Ties ──
@@ -490,12 +552,26 @@ function nameOfGroup(grp: Element): string {
   return /\D/.test(label) ? label : ''
 }
 
+// Some files name their instruments only in the header, in a list of
+// performers (<perfRes>) numbered like the staves: "Violin I" is n="1". Those
+// names are used for staves that have none of their own, and only when the
+// list numbers exactly the score's staves, so a list of a different shape
+// (one entry per section, say) never names the wrong staff.
+function listedInstruments(head: Element | null, scoreDef: Element | null): Map<string, string> {
+  const staves = new Set((scoreDef ? allDeep(scoreDef, 'staffDef') : []).map((d) => d.getAttribute('n') ?? ''))
+  for (const list of head ? allDeep(head, 'perfResList') : []) {
+    const named = new Map(childrenNamed(list, 'perfRes').map((r) => [r.getAttribute('n') ?? '', textOf(r)]))
+    if (named.size === staves.size && [...named].every(([n, name]) => staves.has(n) && name)) return named
+  }
+  return new Map()
+}
+
 class PartTable {
   readonly parts: MeiPart[] = []
   private byStaff = new Map<string, number>()
 
   /** Reads the opening score definition's staves and groups, in score order. */
-  constructor(scoreDef: Element | null) {
+  constructor(scoreDef: Element | null, private listed = new Map<string, string>()) {
     if (scoreDef) this.visit(scoreDef)
   }
 
@@ -520,7 +596,7 @@ class PartTable {
     const n = def.getAttribute('n') ?? ''
     if (this.byStaff.has(n)) return
     const inst = instrumentOf(def)
-    const label = labelOf(def) || inst.instrument || textOf(childrenNamed(def, 'labelAbbr')[0]) || groupLabel
+    const label = labelOf(def) || inst.instrument || this.listed.get(n) || textOf(childrenNamed(def, 'labelAbbr')[0]) || groupLabel
     this.add([n], label || `Staff ${n}`, { instrument: inst.instrument ?? (label || undefined), midiProgram: inst.midiProgram })
   }
 
@@ -596,8 +672,11 @@ export function parseNative(xmlText: string): MeiScore {
 
   const warn = new Warnings()
 
+  // The title's own words: a <titlePart> inside it ("op. 41", "an electronic
+  // transcription") would otherwise run into them without a space.
   const titleEl = firstDeep(doc, 'title')
-  const title = titleEl ? (titleEl.textContent || 'Untitled').trim() : 'Untitled'
+  const ownWords = titleEl ? Array.from(titleEl.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim() : ''
+  const title = ownWords || textOf(titleEl ?? undefined) || 'Untitled'
   let composer = ''
   for (const p of allDeep(doc, 'persName')) {
     if ((p.getAttribute('role') || '').toLowerCase() === 'composer') {
@@ -615,16 +694,24 @@ export function parseNative(xmlText: string): MeiScore {
   const staffDef = firstDeep(music, 'staffDef')
   const meter = openingMeter(scoreDef, doc)
   const keys = openingKeys(scoreDef, music)
-  const partTable = new PartTable(scoreDef)
+  const partTable = new PartTable(scoreDef, listedInstruments(firstDeep(doc, 'meiHead'), scoreDef))
   const meterCount = meter.count
   const meterUnit = meter.unit
   const measureBeats = meterCount * (4 / meterUnit)
 
-  let bpm = 120
-  const tEl =
-    allDeep(music, 'tempo').find((t) => t.getAttribute('midi.bpm')) ||
-    (staffDef && staffDef.getAttribute('midi.bpm') ? staffDef : null)
-  if (tEl) bpm = parseFloat(tEl.getAttribute('midi.bpm') || '') || bpm
+  // Playback tempo first (midi.bpm), then the metronome mark (mm), which counts
+  // in its own unit: a dotted quarter at 60 is 90 quarter notes a minute.
+  const tempoEls = allDeep(music, 'tempo')
+  const withBpm = [...tempoEls, scoreDef, staffDef].find((el) => el?.getAttribute('midi.bpm'))
+  const withMm = [...tempoEls, scoreDef, staffDef].find((el) => el?.getAttribute('mm'))
+  let bpm = parseFloat(withBpm?.getAttribute('midi.bpm') ?? '')
+  if (!(bpm > 0) && withMm) {
+    const mm = parseFloat(withMm.getAttribute('mm') ?? '')
+    const unit = parseFloat(withMm.getAttribute('mm.unit') ?? '4') || 4
+    const dots = parseInt(withMm.getAttribute('mm.dots') ?? '0', 10) || 0
+    bpm = mm * (4 / unit) * (2 - 0.5 ** dots)
+  }
+  if (!(bpm > 0)) bpm = 120
 
   checkFile(music, meter, warn)
 
