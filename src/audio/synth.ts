@@ -125,5 +125,8 @@ export function playSynthNote(
     for (const s of sources) {
       try { s.stop() } catch { /* already stopped */ }
     }
+    // Some browsers refuse a second stop() on a source that already has one
+    // scheduled; disconnecting silences the note whatever they do.
+    amp.disconnect()
   }
 }

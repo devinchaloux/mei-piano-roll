@@ -47,7 +47,7 @@ code.
   simplifies or guesses. Every reader returns this one shape. No UI here, and it
   is unit-tested in `src/test/`.
 - **`src/roll/MeiPianoRoll.tsx`** only draws (one canvas) and plays what a
-  reader returns, and lists the warnings under the roll. Colours come from
+  reader returns, and lists the warnings under the roll. Colors come from
   `src/roll/themes.ts`.
 - **`src/audio/`** plays notes: synth sounds are data recipes in `synth.ts`;
   sampled instruments come from `smplr`, imported only when one is chosen, so
@@ -70,7 +70,7 @@ clones.
    `main`.
 2. **Ask before adding a dependency.** A dependency is a decision. Record it
    in `docs/decisions.md` with its reason.
-3. **If you didn't create a file and its origin and licence aren't clear, don't
+3. **If you didn't create a file and its origin and license aren't clear, don't
    commit it.** This covers MEI files above all: scores and encodings carry their own
    copyright. No MEI files are committed; the stress test fetches them
    (`docs/fixtures.md`).
@@ -114,13 +114,30 @@ history.
 
 ---
 
+## Writing interface text
+
+**American English everywhere**: code, comments, docs and the interface
+("color", "license", "behavior").
+
+Text in the player and the demo reads like brief technical documentation:
+1. Say what a control does, or what to do next, in as few words as that takes.
+2. Never explain how the code works or why it was built this way; that belongs
+   in `docs/decisions.md`.
+3. Anything more a reader might want (a reason, a limit, a reassurance) goes in
+   a tooltip, not on the screen.
+4. Inline text stays only when it prevents a mistake.
+5. One idea, one wording, everywhere it appears.
+6. Write sentences, not fragments spliced with dashes.
+
+---
+
 ## Docs are part of the change
 
 A doc that describes something the code no longer does is worse than no doc.
 Docs land in the same commit as the change that invalidates them:
 
 - every design decision gets an entry in `docs/decisions.md` with its reason;
-- a behaviour change updates the README's "Status" section;
+- a behavior change updates the README's "Status" section;
 - a new source of test files updates `docs/fixtures.md`.
 
 Before committing, grep for what the change invalidates:

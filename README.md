@@ -22,12 +22,12 @@ npm run dev
 ```
 
 Open the address it prints. The demo shows a built-in example; open any `.mei`
-file, or drop one on the page. The file stays in your browser. Below the player,
-the **image maker** saves any bars as SVG or PNG.
+file, or drop one on the page. The file stays in your browser. Three tabs show
+the **full player**, the **compact player** as it sits in an essay, and the
+**image maker**, which saves any bars as SVG or PNG.
 
 The same demo is hosted on Vercel (`vercel.json`): `main` deploys it, and each
-pull request gets its own preview link. For now the deployments ask the viewer
-to sign in to the project's Vercel account. To build it yourself:
+pull request gets its own preview link. To build it yourself:
 
 ```bash
 npm run build:demo   # static site in dist-demo/
@@ -41,18 +41,23 @@ import { MeiPianoRoll } from 'mei-piano-roll'
 <MeiPianoRoll src="/music/example.mei" />
 // or, with the file's text already loaded:
 <MeiPianoRoll meiText={xml} height={320} onLoad={(score) => console.log(score.warnings)} />
+// in a page of text: one play button over the roll, a one-line caption
+<MeiPianoRoll src="/music/example.mei" variant="compact" />
 ```
 
 | Prop | What it does |
 |---|---|
 | `src` / `meiText` | The MEI file, by address or as text |
+| `variant` | `"full"` (default): the roll with its controls underneath. `"compact"`: one play button over the roll and a caption line; it opens into the full player |
+| `header` | Show the title line above the full player; default `true` |
 | `sound` | Starting sound, by id (see `SOUNDS`); default the square lead |
-| `theme` | `"studio"` (default), `"paper"`, `"neon"`, `"ink"`, or your own colours |
-| `accent` | Note colour; without it, the page's `--accent` CSS variable, then the theme's |
+| `theme` | `"studio"` (default), `"paper"`, `"neon"`, `"ink"`, or your own colors |
+| `accent` | Note color; without it, the page's `--accent` CSS variable, then the theme's |
 | `height`, `pxPerBeat`, `bpm` | Size, starting zoom, tempo override |
 | `onLoad` | Called with the parsed score, warnings included |
 
-Also exported: `parseNative(xml)` for the note data without the player, and
+Also exported: `NOTE_COLORS`, eight quick-pick note colors that adjust for
+light and dark themes; `parseNative(xml)` for the note data without the player; and
 `rollToSvg(score, options)` for still images, which needs no browser, so a
 site's build can draw pictures straight from its files.
 
@@ -85,7 +90,7 @@ takes about two minutes. Its job is to show what breaks, not to pass; see
 | Path | What it is |
 |---|---|
 | `src/mei/` | The reader: MEI text in, note data and warnings out. No UI. |
-| `src/roll/` | The player component (one canvas) and its colour themes. |
+| `src/roll/` | The player component (one canvas) and its color themes. |
 | `src/audio/` | Sounds: the synth recipes, the sampled-instrument list, the engine that plays them. |
 | `src/render/` | Still images: SVG from a score, and PNG in the browser. |
 | `src/test/` | Unit tests, with short MEI snippets written for them. |

@@ -28,7 +28,7 @@ export interface RollImageOptions {
   /** Pitch names on notes wide enough to hold them. Default false. */
   noteLabels?: boolean
   theme?: ThemeName | RollTheme
-  /** Note colour; overrides the theme's. */
+  /** Note color; overrides the theme's. */
   noteColor?: string
   /** False leaves the background transparent. Default true. */
   background?: boolean

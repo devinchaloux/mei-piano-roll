@@ -1,8 +1,8 @@
 # Decisions
 
 **Status (2026-10-07):** the native reader works, and the player has a sound
-picker, colour themes and image export. **Next action:** several instruments in
-one roll (colour by part, or separate rolls), then annotations, then the second
+picker, color themes and image export. **Next action:** several instruments in
+one roll (color by part, or separate rolls), then annotations, then the second
 reader (Verovio) for any MEI file.
 
 Each decision gets: date, the choice, the alternatives rejected, and why, so it
@@ -131,7 +131,7 @@ encoding slip than a pickup.
 **Rejected.**
 - *Synths only:* no real piano or trumpet.
 - *The Musyng Kite recordings,* smplr's default: richer but under a share-alike
-  licence.
+  license.
 - *Tone.js:* five times the size, for features the roll doesn't need.
 
 **Why.** The roll's first audience reads music as a producer does, so
@@ -142,23 +142,23 @@ a piece needs them, and a page pays for them only when someone listens.
 site. Before the package is public, host a copy alongside it (smplr supports a
 custom address).
 
-### 2026-10-07: colour themes, and notes follow the page's accent
+### 2026-10-07: color themes, and notes follow the page's accent
 
 **Choice.** Four themes for the roll's surface (`src/roll/themes.ts`): studio
 (the default, a dark DAW surface), paper (light), neon (high contrast) and ink
-(greyscale, for print), or any set of colours passed in. The note colour comes
+(grayscale, for print), or any set of colors passed in. The note color comes
 from the `accent` prop, else the page's `--accent` CSS variable, followed live,
 else the theme.
 
 **Why.** Following the page's variable means a site's theme or accent switch
-recolours the notes with no wrapper code; the prop and themes cover pages that
+recolors the notes with no wrapper code; the prop and themes cover pages that
 have no such variable.
 
 ### 2026-10-07: still images as SVG, made without a browser
 
 **Choice.** `rollToSvg(score, options)` draws any range of bars as SVG text:
 size, keyboard, bar numbers, note names, transparent background, theme and note
-colour are options. It needs no browser, so a site's build can draw pictures
+color are options. It needs no browser, so a site's build can draw pictures
 straight from the excerpt files. `svgToPng` makes a PNG in the browser. The
 player's Image button saves the bars in view; the demo page has a full image
 maker.
@@ -169,15 +169,81 @@ and need a browser.
 **Why.** Pictures made from the real files can't drift from them, and SVG stays
 sharp at any size.
 
-### 2026-10-08: the demo is hosted on Vercel, behind sign-in for now
+### 2026-10-08: the demo is hosted on Vercel, open to anyone
 
 **Choice.** Vercel builds the demo page (`npm run build:demo`, settings in
 `vercel.json`): `main` deploys it and every pull request gets a preview link.
-Deployments require signing in to the project's Vercel account until the
-project goes public.
+The deployments are not locked down: anyone with a link can open them.
 
 **Why.** Trying the roll, and hearing the sampled sounds, should not require
-installing anything; previews let a change be heard before it merges.
+installing anything; previews let a change be heard before it merges. The demo
+holds no private material (it plays a built-in scale or a file the viewer opens),
+so there is nothing for a sign-in to protect.
+
+### 2026-10-08: brief interface text, details in tooltips, American English
+
+**Choice.** The player and the demo say only what a control does or what to do
+next; reasons, limits and how-to hints go in tooltips; status text appears only
+while something loads or fails. The rules are in `CLAUDE.md` ("Writing
+interface text"). The project is written in American English throughout.
+
+**Why.** Short text gets read; long text gets skipped, and the useful detail
+goes with it. The first version explained itself on screen (a permanent line of
+instructions under the roll, a download note in the sound menu).
+
+### 2026-10-08: quick-pick note colors
+
+**Choice.** `NOTE_COLORS` offers eight named colors (Magenta, Sky, Rose, Cyan,
+Amber, Lime, Violet, Neutral), each with a bright strength for dark themes and
+a deeper one for light themes, chosen automatically. Every built-in theme's own
+note color is one of them. The demo shows them as swatches beside a custom
+color picker.
+
+**Why.** Picking a color should take one click, and a color chosen on a dark
+theme should still read when the theme turns light.
+
+### 2026-10-08: a transport that schedules just ahead
+
+**Choice.** Playback goes through a transport (`src/audio/transport.ts`) that
+hands notes to the sound engine about a tenth of a second before they sound,
+on a 25 ms timer. Play, pause, stop, seek, tempo and loop are its methods, and
+it is unit-tested with a fake clock. The player tracks the listener's intent
+separately, so pressing play again while a sound downloads cancels instead of
+starting a second playback, and picking another sound mid-download plays the
+newest choice.
+
+Switching sound cuts the old one off at once: each sampled instrument has its
+own output level, faded to silence in about 20 ms when it is left, rather than
+ringing on through its release under the new sound. A synth note is
+disconnected as well as stopped when playback halts, because some browsers
+refuse a second stop() on a sound that already has one scheduled.
+
+**Rejected.** Scheduling the whole piece when play is pressed, as before. The
+sample library queues notes scheduled far ahead and its stop() leaves that
+queue alone, so pausing, or switching instrument, kept the old notes playing.
+
+**Why.** It is how players stay responsive: nothing is committed further ahead
+than the lookahead, so every control acts at once.
+
+### 2026-10-08: two player layouts, and a studio page for the demo
+
+**Choice.** The player comes in two layouts. The full player puts the controls
+in one bar under the roll: back to start, play/pause, loop, the position as
+bar and beat, then sound, tempo, zoom, image and the "not shown" list. The
+compact player, for essays, shows the roll with one play button over it, a thin
+progress line, and a caption with the title and sound; it opens into the full
+player in place. The demo became a studio page: a side panel for the file and
+the look, and tabs for the full player, the compact player and the image maker.
+Only the open tab's player exists, so two can never play at once.
+
+**Rejected.** Controls above the roll (the first version), which put a row of
+settings between the title and the music; and a media-player bar with the
+settings in a pop-up, which hid the sound and tempo that producers change most.
+A separate Stop button: back to start and pause cover it.
+
+**Why.** The roll is the point, so the controls sit under it, as in a DAW's
+transport. Essays need the music without the machinery; the studio page is
+where the machinery lives.
 
 ## Open questions
 
