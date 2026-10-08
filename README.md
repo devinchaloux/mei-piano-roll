@@ -14,8 +14,9 @@ changes, notes without a length, a few ties it can't follow). Tied notes sound
 once, as one long note, grace notes play just before their beat, and measured
 tremolos play as the repeated notes they stand for. A file with
 several instruments shows each in its own color, on one roll or one lane per
-part, with mute, solo and a sound for each, starting from the instruments the
-file names. The second reader, for everything
+part, with mute, solo, a color and a sound for each, starting from the
+instruments the file names. The composer, and the artist for a song, show
+beside the title when the file names them. The second reader, for everything
 else, is not built yet. Nothing is published to npm yet.
 
 ## Try it
@@ -30,7 +31,10 @@ npm run dev
 Open the address it prints. The demo shows a built-in two-part example; open any `.mei`
 file, or drop one on the page. The file stays in your browser. Three tabs show
 the **full player**, the **compact player** as it sits in an essay, and the
-**image maker**, which saves any bars as SVG or PNG.
+**image maker**, which saves any bars as SVG or PNG. The side panel sets the
+theme and each part's color for all three. Sounds chosen in either player
+carry over to the other, and the compact player's tab gives the code for an
+embed set up that way (**Copy code**).
 
 The same demo is hosted on Vercel (`vercel.json`): `main` deploys it, and each
 pull request gets its own preview link. To build it yourself:
@@ -47,16 +51,18 @@ import { MeiPianoRoll } from 'mei-piano-roll'
 <MeiPianoRoll src="/music/example.mei" />
 // or, with the file's text already loaded:
 <MeiPianoRoll meiText={xml} height={320} onLoad={(score) => console.log(score.warnings)} />
-// in a page of text: one play button over the roll, a one-line caption
+// in a page of text: a play button over the roll, a one-line caption with play/pause
 <MeiPianoRoll src="/music/example.mei" variant="compact" />
 ```
 
 | Prop | What it does |
 |---|---|
 | `src` / `meiText` | The MEI file, by address or as text |
-| `variant` | `"full"` (default): the roll with its controls underneath. `"compact"`: one play button over the roll and a caption line; it opens into the full player |
+| `variant` | `"full"` (default): the roll with its controls underneath. `"compact"`: a play button over the roll and a caption line with play/pause, the title and the composer; it opens into the full player |
 | `header` | Show the title line above the full player; default `true` |
 | `sound` | Starting sound for every part, by id (see `SOUNDS`); default each part's nearest sound to the instrument the file names, else the square lead |
+| `partSounds` | Starting sound for each part, by id, in score order; takes precedence over `sound` |
+| `onPartSoundsChange` | Called with every part's sound whenever the listener changes one, so a page can keep the choice |
 | `theme` | `"studio"` (default), `"paper"`, `"neon"`, `"ink"`, or your own colors |
 | `accent` | Note color (the first part's, with several); without it, the page's `--accent` CSS variable, then the theme's |
 | `partColors` | One color per part, in score order; default the note color, then quick-pick colors |

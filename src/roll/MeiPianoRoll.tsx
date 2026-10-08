@@ -56,9 +56,16 @@ export interface MeiPianoRollProps {
    */
   sound?: string;
   /**
+   * Starting sound for each part, by id, in score order. Takes precedence over
+   * `sound` for the parts it covers.
+   */
+  partSounds?: string[];
+  /** Called with every part's sound, in score order, whenever the listener changes one. */
+  onPartSoundsChange?: (ids: string[]) => void;
+  /**
    * "full" (default): the roll with its controls underneath. "compact": the roll
-   * with one play button over it and a one-line caption, for a page of text; it
-   * opens into the full player on request.
+   * with a play button over it and a one-line caption with play/pause, for a
+   * page of text; it opens into the full player on request.
    */
   variant?: "full" | "compact";
   /** Show the title line above the full player. Default true. */
@@ -73,12 +80,17 @@ export interface MeiPianoRollProps {
 // ---------------------------------------------------------------------------
 const clamp = (v: number, a: number, b: number) => Math.max(a, Math.min(b, v));
 
-// The sound each part starts with: the page's choice for all, else the nearest
-// to the instrument the file names, else the default.
-function startingSounds(parts: MeiPart[], pageSound: string | undefined): string[] {
+// The sound each part starts with: the page's choice for that part, else for
+// all parts, else the nearest to the instrument the file names, else the default.
+function startingSounds(parts: MeiPart[], pageSound: string | undefined, pagePartSounds: string[] | undefined): string[] {
   const count = Math.max(parts.length, 1);
   return Array.from({ length: count }, (_, i) =>
-    findSound(pageSound ?? (parts[i] ? soundForPart(parts[i]) ?? undefined : undefined)).id);
+    findSound(pagePartSounds?.[i] ?? pageSound ?? (parts[i] ? soundForPart(parts[i]) ?? undefined : undefined)).id);
+}
+
+// Who made it: the composer, and the artist when the file names a different one.
+function byline(score: MeiScore): string {
+  return [...new Set([score.composer, score.artist].filter(Boolean))].join(" · ");
 }
 const unique = <T,>(xs: T[]) => [...new Set(xs)];
 function roundRect(c: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
@@ -143,7 +155,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [errMsg, setErrMsg] = useState("");
-  const [meta, setMeta] = useState<{ title: string; composer: string; line: string } | null>(null);
+  const [meta, setMeta] = useState<{ title: string; byline: string; line: string } | null>(null);
   const [playing, setPlaying] = useState(false);
   const [bpm, setBpm] = useState<number>(props.bpm ?? 120);
   const [zoom, setZoom] = useState<number>(props.pxPerBeat ?? 64);
@@ -177,7 +189,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   // up once, on mount, and must still see the sounds chosen since. The version
   // goes up with every change, so a download that finishes after a newer
   // choice knows it has been superseded.
-  const [partSounds, setPartSounds] = useState<string[]>(() => startingSounds([], props.sound));
+  const [partSounds, setPartSounds] = useState<string[]>(() => startingSounds([], props.sound, props.partSounds));
   const partSoundsRef = useRef(partSounds);
   const soundsVersionRef = useRef(0);
   const [soundLoad, setSoundLoad] = useState<{ status: SoundStatus; ids: string[] }>({ status: "ready", ids: [] });
@@ -185,6 +197,8 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   // A ref, so a new onLoad function from the parent doesn't re-read the file.
   const onLoadRef = useRef(props.onLoad);
   useEffect(() => { onLoadRef.current = props.onLoad; }, [props.onLoad]);
+  const onSoundsRef = useRef(props.onPartSoundsChange);
+  useEffect(() => { onSoundsRef.current = props.onPartSoundsChange; }, [props.onPartSoundsChange]);
 
   // Keep refs in sync with UI state.
   useEffect(() => { bpmRef.current = bpm; }, [bpm]);
@@ -291,6 +305,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     partSoundsRef.current = next;
     setPartSounds(next);
     soundsVersionRef.current++;
+    onSoundsRef.current?.(next);
     const transport = transportRef.current;
     if (transport?.playing) transport.pause();
     const result = await prepareSounds();
@@ -381,7 +396,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         setLaneRows(widestLaneRows(score.notes));
         setMuted(new Set());
         setSoloed(new Set());
-        partSoundsRef.current = startingSounds(score.parts, props.sound);
+        partSoundsRef.current = startingSounds(score.parts, props.sound, props.partSounds);
         setPartSounds(partSoundsRef.current);
         soundsVersionRef.current++;
         setWarnings(score.warnings);
@@ -393,7 +408,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         }
         setMeta({
           title: score.title,
-          composer: score.composer,
+          byline: byline(score),
           line: [
             `${score.notes.length} notes`,
             ...(score.parts.length > 1 ? [`${score.parts.length} parts`] : []),
@@ -411,7 +426,8 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     }
     load();
     return () => { canceled = true; };
-    // props.sound only sets the starting sounds; changing it later doesn't re-read the file.
+    // props.sound and props.partSounds only set the starting sounds; changing
+    // them later doesn't re-read the file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [src, meiText, props.bpm]);
 
@@ -807,7 +823,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       {layout === "full" && props.header !== false && (
         <div className="mpr-header">
           <span className="mpr-title">{meta?.title ?? "—"}</span>
-          {meta?.composer ? <span className="mpr-composer">{meta.composer}</span> : null}
+          {meta?.byline ? <span className="mpr-composer">{meta.byline}</span> : null}
           <span className="mpr-spacer" />
           <span className="mpr-meta">{meta?.line ?? ""}</span>
         </div>
@@ -872,7 +888,11 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         </div>
       ) : (
         <div className="mpr-foot">
+          <button className="mpr-icon" onClick={togglePlay} disabled={!ready} title={playing ? "Pause (Space)" : "Play (Space)"} aria-label={playing ? "Pause" : "Play"}>
+            <Icon name={playing ? "pause" : "play"} />
+          </button>
           <span className="mpr-title">{meta?.title ?? ""}</span>
+          {meta?.byline ? <span className="mpr-composer">{meta.byline}</span> : null}
           <span className="mpr-spacer" />
           {!multi && soundSelect(0)}
           <span className="mpr-meta">{bpm} BPM</span>
@@ -966,6 +986,8 @@ const CSS = `
 
 .mpr-bar, .mpr-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--mpr-border); }
 .mpr-foot { gap: 12px; padding: 8px 12px; }
+.mpr-foot .mpr-title { font-size: 13px; }
+.mpr-foot .mpr-composer { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mpr-icon { appearance: none; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--mpr-border); background: transparent; color: var(--mpr-text); cursor: pointer; padding: 0; }
 .mpr-foot .mpr-icon { width: 30px; height: 30px; }
 .mpr-icon:hover:not(:disabled) { border-color: var(--mpr-muted); }

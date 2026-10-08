@@ -663,6 +663,67 @@ function checkFile(doc: Document | Element, meter: OpeningMeter, warn: Warnings)
   }
 }
 
+// ── Who made it ──
+// MEI names a composer several ways across its versions: a <composer> element
+// (MEI 3 and 4), a <creator> with a role (MEI 5), or a name with a role
+// (<persName role="composer">, <corpName role="artist"> for a band). Roles are
+// words or MARC relator codes ("cmp", "prf"). Headers often name the same
+// person twice, in the title statement and again in a source description,
+// spelled differently, so only the first group of names listed together counts.
+
+const COMPOSER_ROLES = new Set(['composer', 'cmp'])
+const ARTIST_ROLES = new Set(['artist', 'performer', 'prf'])
+const PERSON_ELEMENTS = new Set(['persName', 'corpName', 'name'])
+const NAME_ELEMENTS = new Set(['creator', ...PERSON_ELEMENTS])
+
+function hasRole(el: Element, roles: Set<string>): boolean {
+  return (el.getAttribute('role') ?? '').toLowerCase().split(/[\s,;]+/).some((r) => roles.has(r))
+}
+
+// Text with a space wherever elements meet, so <foreName>Clara</foreName><surname>Schumann</surname>
+// reads "Clara Schumann", not "ClaraSchumann".
+function spacedText(el: Element): string {
+  const words: string[] = []
+  const walk = (n: Node) => {
+    if (n.nodeType === 3) words.push(n.textContent ?? '')
+    else n.childNodes.forEach(walk)
+  }
+  walk(el)
+  return words.join(' ').replace(/\s+/g, ' ').replace(/\s+([,.;:)])/g, '$1').trim()
+}
+
+// 4 is DOCUMENT_POSITION_FOLLOWING, written out because plain Node (the stress
+// test) has a DOMParser but no global Node.
+const inDocumentOrder = (x: Element, y: Element) => (x.compareDocumentPosition(y) & 4 ? -1 : 1)
+
+// The names of the people credited in a role: from the header, else anywhere
+// in the file (a title page drawn in the music). `element` is a dedicated
+// element for the role, such as <composer>, which needs no role attribute.
+function creditedNames(doc: Document, roles: Set<string>, element?: string): string {
+  const head = firstDeep(doc, 'meiHead')
+  for (const root of head ? [head, doc] : [doc]) {
+    const found = [
+      ...(element ? allDeep(root, element) : []),
+      ...[...NAME_ELEMENTS].flatMap((name) => allDeep(root, name).filter((el) => hasRole(el, roles))),
+    ].sort(inDocumentOrder)
+    // A name inside another match (<composer><persName role="composer">) is the same credit.
+    const outer = found.filter((el) => !found.some((other) => other !== el && other.contains(el)))
+    if (!outer.length) continue
+    const group = outer.filter((el) => el.parentNode === outer[0].parentNode)
+    const names = group.flatMap((el) => {
+      // A <composer> or <creator> may wrap names among other words (dates, "and").
+      const inner = PERSON_ELEMENTS.has(el.localName) ? [] : [...PERSON_ELEMENTS]
+        .flatMap((name) => allDeep(el, name))
+        .filter((c) => !PERSON_ELEMENTS.has(c.parentElement?.localName ?? ''))
+        .sort(inDocumentOrder)
+      return (inner.length ? inner : [el]).map(spacedText)
+    })
+    const unique = [...new Set(names.filter(Boolean))]
+    if (unique.length) return unique.join(', ')
+  }
+  return ''
+}
+
 // ── Entry point ──
 
 export function parseNative(xmlText: string): MeiScore {
@@ -677,13 +738,8 @@ export function parseNative(xmlText: string): MeiScore {
   const titleEl = firstDeep(doc, 'title')
   const ownWords = titleEl ? Array.from(titleEl.childNodes).filter((n) => n.nodeType === 3).map((n) => n.textContent ?? '').join(' ').replace(/\s+/g, ' ').trim() : ''
   const title = ownWords || textOf(titleEl ?? undefined) || 'Untitled'
-  let composer = ''
-  for (const p of allDeep(doc, 'persName')) {
-    if ((p.getAttribute('role') || '').toLowerCase() === 'composer') {
-      composer = (p.textContent || '').trim()
-      break
-    }
-  }
+  const composer = creditedNames(doc, COMPOSER_ROLES, 'composer')
+  const artist = creditedNames(doc, ARTIST_ROLES)
 
   // Only the music itself: a file's header can quote an incipit (its opening
   // bars) in full, and those bars must not be read as the start of the piece.
@@ -766,6 +822,7 @@ export function parseNative(xmlText: string): MeiScore {
   return {
     title,
     composer,
+    artist,
     bpm,
     meterCount,
     meterUnit,

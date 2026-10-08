@@ -311,3 +311,48 @@ describe('parseNative: tremolo units that cannot be right', () => {
     expect(s.notes.map((n) => n.start)).toEqual([0, 0.5])
   })
 })
+
+// ── Who made it ──
+
+describe('parseNative: composer and artist', () => {
+  const withHead = (head: string) => `<?xml version="1.0" encoding="UTF-8"?>
+<mei xmlns="http://www.music-encoding.org/ns/mei">
+  <meiHead>${head}</meiHead>
+  <music><body><mdiv><score>
+    <scoreDef meter.count="4" meter.unit="4"><staffGrp><staffDef n="1" lines="5"/></staffGrp></scoreDef>
+    <section><measure n="1"><staff n="1"><layer><note pname="c" oct="4" dur="1"/></layer></staff></measure></section>
+  </score></mdiv></body></music>
+</mei>`
+  const read = (head: string) => {
+    const s = parseNative(withHead(head))
+    return [s.composer, s.artist]
+  }
+
+  it('reads a <composer> element, with the names inside it and a space between name parts', () => {
+    expect(read('<fileDesc><titleStmt><title>T</title><composer><persName><foreName>Clara</foreName><surname>Schumann</surname></persName> <date>1819–1896</date></composer></titleStmt></fileDesc>'))
+      .toEqual(['Clara Schumann', ''])
+  })
+
+  it("reads MEI 5's <creator> and a name with a role, in words or as a relator code", () => {
+    expect(read('<fileDesc><titleStmt><title>T</title><creator role="composer">Hildegard von Bingen</creator></titleStmt></fileDesc>')[0]).toBe('Hildegard von Bingen')
+    expect(read('<fileDesc><titleStmt><title>T</title><respStmt><persName role="cmp">Fanny Hensel</persName></respStmt></titleStmt></fileDesc>')[0]).toBe('Fanny Hensel')
+  })
+
+  it('joins names listed together, and ignores the same person named again elsewhere in the header', () => {
+    const head = `<fileDesc><titleStmt><title>T</title><respStmt>
+        <persName role="composer">John Lennon</persName><persName role="composer">Paul McCartney</persName><persName role="encoder">E. Coder</persName>
+      </respStmt></titleStmt>
+      <sourceDesc><source><bibl><composer>Lennon, J.</composer></bibl></source></sourceDesc></fileDesc>`
+    expect(read(head)[0]).toBe('John Lennon, Paul McCartney')
+  })
+
+  it('reads an artist: a performer or band', () => {
+    expect(read('<fileDesc><titleStmt><title>T</title><respStmt><persName role="composer">A. Writer</persName><corpName role="artist">The Band</corpName></respStmt></titleStmt></fileDesc>'))
+      .toEqual(['A. Writer', 'The Band'])
+    expect(read('<fileDesc><titleStmt><title>T</title><creator role="performer">A. Singer</creator></titleStmt></fileDesc>')).toEqual(['', 'A. Singer'])
+  })
+
+  it('leaves both empty when the file names no one', () => {
+    expect(read('<fileDesc><titleStmt><title>T</title></titleStmt></fileDesc>')).toEqual(['', ''])
+  })
+})

@@ -1,8 +1,9 @@
 # Decisions
 
 **Status (2026-10-08):** the native reader works, and the player has a sound
-picker, color themes, image export and several instruments in one roll. Tied
-notes sound once and grace notes play before their beat.
+picker, color themes, image export and several instruments in one roll, each
+with its own color and sound. Tied notes sound once and grace notes play
+before their beat. The composer and artist show when the file names them.
 **Next action:** annotations, then the second reader (Verovio) for any MEI
 file.
 
@@ -250,6 +251,11 @@ A separate Stop button: back to start and pause cover it.
 transport. Essays need the music without the machinery; the studio page is
 where the machinery lives.
 
+**Note (2026-10-08).** The compact player's caption now starts with a
+play/pause button: the button over the roll disappears while it plays, and
+clicking the roll moves the playhead, so a reader had no way to pause other
+than the space bar.
+
 ### 2026-10-08: several instruments in one roll
 
 **Choice.** Every note now carries a `part`, an index into the score's new
@@ -381,6 +387,44 @@ quarter at 60 is 90 quarter notes a minute), then 120.
 **Why.** A string quartet played a viola part on a violin and a cello part on
 the default synth. Many files give only the metronome mark, and played at 120
 regardless.
+
+### 2026-10-08: a color for each part, and the embed keeps the chosen sounds
+
+**Choice.** The demo's side panel lists the parts of a file with several; the
+color picker sets the color of the part selected there, for all three tabs.
+The demo remembers the sound chosen for each part in either player, so the
+essay embed plays what the full player was set to, and the embed's tab shows
+the code for an embed set up that way (theme, colors and sounds; defaults left
+out, so a page's own accent still colors the notes unless one was chosen). The
+player takes a `partSounds` prop, a starting sound for each part, and reports
+changes through `onPartSoundsChange`.
+
+**Rejected.** Picking colors inside the player itself: the colors are part of
+how an excerpt is presented, set once by whoever embeds it, like the theme;
+listeners change sounds, so those stay in the player.
+
+**Why.** An essay's excerpt is set up in the studio page and then embedded;
+without a way to carry the choices over, every embed played the file's
+suggested sounds in the default colors.
+
+### 2026-10-08: the composer and artist, as the file names them
+
+**Choice.** The reader returns `composer` and a new `artist` (a performer or
+band, for a song), and the players show them beside the title. It finds a
+composer in a `<composer>` element (MEI 3 and 4), a `<creator>` with a role
+(MEI 5), or a name with a role (`<persName role="composer">`), with roles in
+words or as MARC relator codes (`cmp`); an artist by the roles `artist`,
+`performer` or `prf`, on a person's or a group's name (`<corpName>`, for a
+band). It looks in the header first. Names listed together are joined; the
+same person named again elsewhere in the header (in a source description,
+often spelled differently) is not.
+
+**Rejected.** Every credited name in the header: a file often credits its
+encoder, editor and publisher, and names the composer twice.
+
+**Why.** Before, only `<persName role="composer">` was read, and the demo
+didn't show it at all. On the 617 sample files, a composer is now found in 420
+(from 390), and no file lost one; the gain is files that use only `<composer>`.
 
 ## Open questions
 
