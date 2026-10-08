@@ -10,7 +10,9 @@ import { layoutLanes } from '../roll/lanes'
  * A pure function: score in, SVG text out, no browser needed. So the same call
  * works on a page ("save image") and in a site's build step (draw every
  * excerpt's picture when the site builds, so pictures can't drift from the
- * files they come from). For PNG, see toPng.ts.
+ * files they come from). Reading the file first does need a DOMParser, which
+ * a Node build supplies itself (jsdom's, as the stress test does). For PNG,
+ * see toPng.ts.
  * ======================================================================== */
 
 export interface RollImageOptions {

@@ -170,6 +170,10 @@ and need a browser.
 **Why.** Pictures made from the real files can't drift from them, and SVG stays
 sharp at any size.
 
+**Note (2026-10-08).** "Needs no browser" holds for the drawing only.
+Reading the MEI (`parseNative`) uses the browser's `DOMParser`, so a site's
+build in Node must supply one, such as jsdom's, before it reads a file.
+
 ### 2026-10-08: the demo is hosted on Vercel, open to anyone
 
 **Choice.** Vercel builds the demo page (`npm run build:demo`, settings in
