@@ -201,6 +201,22 @@ color picker.
 **Why.** Picking a color should take one click, and a color chosen on a dark
 theme should still read when the theme turns light.
 
+### 2026-10-08: a transport that schedules just ahead
+
+**Choice.** Playback goes through a transport (`src/audio/transport.ts`) that
+hands notes to the sound engine about a tenth of a second before they sound,
+on a 25 ms timer. Play, pause, stop, seek, tempo and loop are its methods, and
+it is unit-tested with a fake clock. The player tracks the listener's intent
+separately, so pressing play again while a sound downloads cancels instead of
+starting a second playback.
+
+**Rejected.** Scheduling the whole piece when play is pressed, as before. The
+sample library queues notes scheduled far ahead and its stop() leaves that
+queue alone, so pausing, or switching instrument, kept the old notes playing.
+
+**Why.** It is how players stay responsive: nothing is committed further ahead
+than the lookahead, so every control acts at once.
+
 ## Open questions
 
 | Question | Options |

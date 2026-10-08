@@ -19,7 +19,8 @@ export class SoundEngine {
   private synthOut: GainNode
   private sampleOut: GainNode
   private sound: Sound
-  private voices: Array<() => void> = []
+  // Sounding synth notes: a way to stop each, and when it ends on its own.
+  private voices: Array<{ stop: () => void; end: number }> = []
   // Cached per instrument, so switching back and forth downloads nothing twice.
   private instruments = new Map<string, Promise<SampledInstrument>>()
   private current: SampledInstrument | null = null
@@ -87,11 +88,15 @@ export class SoundEngine {
       if (d > 0.001) this.current.start({ note: midi, time: t0, duration: d })
       return
     }
-    this.voices.push(playSynthNote(this.ctx, this.synthOut, this.sound.id, midi, when, duration))
+    // Forget notes that have finished, so the list stays short in long pieces.
+    const now = this.ctx.currentTime
+    this.voices = this.voices.filter((v) => v.end > now)
+    // The end allows for the longest release among the presets.
+    this.voices.push({ stop: playSynthNote(this.ctx, this.synthOut, this.sound.id, midi, when, duration), end: when + duration + 2 })
   }
 
   stopAll(): void {
-    for (const stop of this.voices) stop()
+    for (const v of this.voices) v.stop()
     this.voices = []
     this.current?.stop()
   }

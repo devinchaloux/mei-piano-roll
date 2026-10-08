@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { parseNative, midiName, isBlackKey } from "../mei/parseNative";
 import type { MeiNote, MeiScore, MeiWarning } from "../mei/types";
 import { SoundEngine, type SoundStatus } from "../audio/engine";
+import { Transport } from "../audio/transport";
 import { SOUNDS, DEFAULT_SOUND, SAMPLE_CREDIT, findSound } from "../audio/sounds";
 import { resolveTheme, shade, type RollTheme, type ThemeName } from "./themes";
 import { rollToSvg } from "../render/svg";
@@ -96,7 +97,15 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   const loopFnRef = useRef<() => void>(() => {});
 
   // Transport, kept in a ref so the rAF loop never reads stale React state.
-  const tx = useRef({ playing: false, beat: 0, startTime: 0, offsetX: 0, targetOffsetX: 0, raf: 0 });
+  // The view's state: playhead (mirrored from the transport while playing) and camera.
+  const tx = useRef({ beat: 0, offsetX: 0, targetOffsetX: 0, raf: 0, manualAt: 0 });
+  // Plays the notes (src/audio/transport.ts). Made with the sound engine, on first play.
+  const transportRef = useRef<Transport | null>(null);
+  // The listener's intent: true from pressing play until pause, stop or the end,
+  // including while a sound is still downloading. A newer request supersedes an
+  // older one through the token, so a quick second press can't start twice.
+  const wantPlayRef = useRef(false);
+  const startTokenRef = useRef(0);
 
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [errMsg, setErrMsg] = useState("");
@@ -120,7 +129,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   // Keep refs in sync with UI state.
   useEffect(() => { bpmRef.current = bpm; }, [bpm]);
   useEffect(() => { pxRef.current = zoom; drawRef.current(); }, [zoom]);
-  useEffect(() => { loopRef.current = loop; }, [loop]);
+  useEffect(() => { loopRef.current = loop; if (transportRef.current) transportRef.current.loop = loop; }, [loop]);
 
   // ---- Colors ------------------------------------------------------------
   // Follow the page's --accent live: a site's theme or accent switch changes
@@ -144,26 +153,35 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     drawRef.current();
   }, [theme, noteColor]);
 
-  const secPerBeat = () => 60 / bpmRef.current;
 
   // ---- Audio -------------------------------------------------------------
-  // The engine is made on first use: browsers only allow sound after a click.
+  // The engine and transport are made on first use: browsers only allow sound
+  // after a click.
   function ensureEngine(): SoundEngine {
-    if (!engineRef.current) engineRef.current = new SoundEngine(soundIdRef.current);
-    return engineRef.current;
-  }
-  function stopAllVoices() {
-    engineRef.current?.stopAll();
-  }
-  function scheduleFrom(beatOffset: number) {
-    const engine = ensureEngine();
-    const spb = secPerBeat();
-    tx.current.startTime = engine.ctx.currentTime + 0.06 - beatOffset * spb;
-    const score = scoreRef.current!;
-    for (const n of score.notes) {
-      if (n.start + n.dur <= beatOffset + 1e-6) continue;
-      engine.play(n.midi, tx.current.startTime + n.start * spb, n.dur * spb);
+    if (!engineRef.current) {
+      const engine = new SoundEngine(soundIdRef.current);
+      const transport = new Transport({
+        now: () => engine.ctx.currentTime,
+        play: (midi, when, dur) => engine.play(midi, when, dur),
+        stopAll: () => engine.stopAll(),
+      });
+      transport.loop = loopRef.current;
+      transport.setTempo(bpmRef.current);
+      transport.onEnd = () => {
+        wantPlayRef.current = false;
+        setPlaying(false);
+        tx.current.beat = transport.position();
+        startLoopIfNeeded();
+      };
+      const score = scoreRef.current;
+      if (score) {
+        transport.setScore(score.notes, score.totalBeats);
+        transport.seek(tx.current.beat);
+      }
+      engineRef.current = engine;
+      transportRef.current = transport;
     }
+    return engineRef.current;
   }
   // A sampled sound has to download before it can play; a synth is ready now.
   async function prepareSound(id: string): Promise<boolean> {
@@ -181,13 +199,23 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       return false;
     }
   }
+  // Switching sound keeps the playhead: the old sound is silenced at once, and
+  // playback carries on with the new one as soon as it is ready.
   async function onSoundChange(id: string) {
     soundIdRef.current = id;
     setSoundId(id);
-    const wasPlaying = tx.current.playing;
-    if (wasPlaying) pause();
+    const transport = transportRef.current;
+    if (transport?.playing) transport.pause();
     const ok = await prepareSound(id);
-    if (wasPlaying && ok) play();
+    if (soundIdRef.current !== id) return;
+    if (!wantPlayRef.current) return;
+    if (ok) {
+      transportRef.current?.play();
+      startLoopIfNeeded();
+    } else {
+      wantPlayRef.current = false;
+      setPlaying(false);
+    }
   }
 
   // ---- Transport ---------------------------------------------------------
@@ -195,30 +223,36 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     if (!tx.current.raf) tx.current.raf = requestAnimationFrame(loopFnRef.current);
   }
   async function play() {
-    const score = scoreRef.current;
-    if (!score || tx.current.playing) return;
+    if (!scoreRef.current || wantPlayRef.current) return;
+    wantPlayRef.current = true;
+    setPlaying(true);
+    const token = ++startTokenRef.current;
     const engine = ensureEngine();
     engine.ctx.resume();
     if (engine.soundId !== soundIdRef.current || !soundReadyRef.current) {
-      if (!(await prepareSound(soundIdRef.current))) return;
+      const ok = await prepareSound(soundIdRef.current);
+      if (token !== startTokenRef.current) return; // paused, or played again, meanwhile
+      if (!ok) { wantPlayRef.current = false; setPlaying(false); return; }
     }
-    if (tx.current.playing) return;
-    if (tx.current.beat >= score.totalBeats - 1e-6) tx.current.beat = 0;
-    scheduleFrom(tx.current.beat);
-    tx.current.playing = true;
-    setPlaying(true);
+    if (token !== startTokenRef.current || !wantPlayRef.current) return;
+    transportRef.current!.play();
     startLoopIfNeeded();
   }
   function pause() {
-    if (!tx.current.playing) return;
-    tx.current.playing = false;
+    wantPlayRef.current = false;
+    startTokenRef.current++;
     setPlaying(false);
-    stopAllVoices();
+    const transport = transportRef.current;
+    if (transport) { transport.pause(); tx.current.beat = transport.position(); }
+    startLoopIfNeeded();
+  }
+  function togglePlay() {
+    if (wantPlayRef.current) pause();
+    else play();
   }
   function stop() {
-    tx.current.playing = false;
-    setPlaying(false);
-    stopAllVoices();
+    pause();
+    transportRef.current?.stop();
     tx.current.beat = 0;
     tx.current.targetOffsetX = 0;
     startLoopIfNeeded();
@@ -228,16 +262,14 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     if (!score) return;
     const b = clamp(beat, 0, score.totalBeats);
     tx.current.beat = b;
-    if (tx.current.playing) { stopAllVoices(); scheduleFrom(b); }
+    transportRef.current?.seek(b);
     startLoopIfNeeded();
   }
   // Rewind the playhead (and the view) to the start, whether playing or not.
   function toStart() {
     if (!scoreRef.current) return;
-    tx.current.beat = 0;
     tx.current.targetOffsetX = 0;
-    if (tx.current.playing) { stopAllVoices(); scheduleFrom(0); }
-    startLoopIfNeeded();
+    seekToBeat(0);
   }
 
   // ---- Setup: parse, canvas sizing, input, render loop -------------------
@@ -256,9 +288,18 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         const score = parseNative(text);
         if (canceled) return;
         scoreRef.current = score;
+        // A new file: stop, back to the start, and give the transport its notes.
+        wantPlayRef.current = false;
+        setPlaying(false);
+        tx.current.beat = 0;
+        transportRef.current?.setScore(score.notes, score.totalBeats);
         setWarnings(score.warnings);
         onLoadRef.current?.(score);
-        if (props.bpm == null) { bpmRef.current = score.bpm; setBpm(Math.round(score.bpm)); }
+        if (props.bpm == null) {
+          bpmRef.current = score.bpm;
+          setBpm(Math.round(score.bpm));
+          transportRef.current?.setTempo(score.bpm);
+        }
         setMeta({
           title: score.title,
           composer: score.composer,
@@ -361,7 +402,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         if (x + w < KEY_W || x > cssW) continue;
         const y = yFor(n.midi);
         const h = noteH - 2;
-        const active = t.playing && t.beat >= n.start - 1e-6 && t.beat < n.start + n.dur - 1e-6;
+        const active = !!transportRef.current?.playing && t.beat >= n.start - 1e-6 && t.beat < n.start + n.dur - 1e-6;
         roundRect(ctx, x + 1, y + 1, w, h, 3);
         const grad = ctx.createLinearGradient(0, y, 0, y + h);
         const fill = active ? th.activeNote : noteColorRef.current;
@@ -433,33 +474,23 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       if (Math.abs(diff) > 0.4) t.offsetX += diff * 0.22;
       else t.offsetX = t.targetOffsetX;
 
-      if (t.playing) {
+      const transport = transportRef.current;
+      if (transport?.playing) {
         const score = scoreRef.current!;
-        t.beat = (engineRef.current!.ctx.currentTime - t.startTime) / secPerBeat();
-        if (t.beat >= score.totalBeats) {
-          if (loopRef.current) {
-            t.beat = 0;
-            stopAllVoices();
-            scheduleFrom(0);
-          } else {
-            t.playing = false;
-            setPlaying(false);
-            stopAllVoices();
-            t.beat = score.totalBeats;
-          }
-        }
-        // follow: keep playhead ~38% into the track once it gets there
+        t.beat = transport.position();
+        // follow: keep playhead ~38% into the track once it gets there, but not
+        // for a moment after the listener has moved the view by hand.
         const px = pxRef.current;
         const cv = canvasRef.current!;
         const trackW = cv.clientWidth - KEY_W;
         const contentW = score.totalBeats * px;
         const maxOffset = Math.max(0, contentW - trackW);
-        t.targetOffsetX = clamp(t.beat * px - trackW * 0.38, 0, maxOffset);
+        if (performance.now() - t.manualAt > 1500) t.targetOffsetX = clamp(t.beat * px - trackW * 0.38, 0, maxOffset);
       }
 
       draw();
 
-      const animating = t.playing || Math.abs(t.targetOffsetX - t.offsetX) > 0.4;
+      const animating = !!transportRef.current?.playing || Math.abs(t.targetOffsetX - t.offsetX) > 0.4;
       t.raf = animating ? requestAnimationFrame(frame) : 0;
     };
     loopFnRef.current = frame;
@@ -469,6 +500,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       e.preventDefault();
       const t = tx.current;
       t.targetOffsetX += e.deltaX !== 0 ? e.deltaX : e.deltaY;
+      t.manualAt = performance.now();
       startLoopIfNeeded();
     };
     let dragging = false;
@@ -489,6 +521,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       const dx = e.clientX - dragStartX;
       moved = Math.max(moved, Math.abs(dx));
       tx.current.offsetX = tx.current.targetOffsetX = dragStartOffset - dx;
+      tx.current.manualAt = performance.now();
       startLoopIfNeeded();
     };
     const onPointerUp = (e: PointerEvent) => {
@@ -517,8 +550,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       if (e.key === "Home") { e.preventDefault(); toStart(); }
       else if (e.key === " " || e.key === "Spacebar") {
         e.preventDefault();
-        if (tx.current.playing) pause();
-        else play();
+        togglePlay();
       }
     };
 
@@ -543,6 +575,8 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
       canvas.removeEventListener("keydown", onKeyDown);
       if (transport.raf) cancelAnimationFrame(transport.raf);
       transport.raf = 0;
+      transportRef.current?.dispose();
+      transportRef.current = null;
       engineRef.current?.close();
       engineRef.current = null;
     };
@@ -573,11 +607,9 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
 
   const onBpmChange = (v: number) => {
     if (!(v > 0)) return;
-    const wasPlaying = tx.current.playing;
-    if (wasPlaying) pause();
     setBpm(v);
     bpmRef.current = v;
-    if (wasPlaying) play();
+    transportRef.current?.setTempo(v);
   };
 
   return (
@@ -602,7 +634,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
         </button>
         <button
           className="mpr-btn mpr-primary"
-          onClick={() => (tx.current.playing ? pause() : play())}
+          onClick={togglePlay}
           disabled={status !== "ready"}
         >
           {playing ? "⏸ Pause" : "▶ Play"}
