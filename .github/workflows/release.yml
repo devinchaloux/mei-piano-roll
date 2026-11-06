@@ -1,0 +1,57 @@
+name: Release
+
+# Publishing a GitHub release attaches the built package to it, as
+# mei-piano-roll-<version>.tgz. A page installs that file by its link
+# (`npm install https://github.com/devinchaloux/spool/releases/download/v0.1.0/mei-piano-roll-0.1.0.tgz`)
+# until the package is on npm (docs/decisions.md, 2026-11-06).
+on:
+  release:
+    types: [published]
+
+# Uploading the package to the release needs write access to the repo's contents.
+permissions:
+  contents: write
+
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+
+      - name: Install
+        run: npm ci --no-audit --no-fund
+
+      # The release's tag names the version, so a release tagged v0.2.0 can
+      # never carry a package built as 0.1.0.
+      - name: Tag matches package.json
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          VERSION="v$(node -p "require('./package.json').version")"
+          if [ "$TAG" != "$VERSION" ]; then
+            echo "::error::The release is tagged $TAG but package.json says $VERSION. Bump the version or retag."
+            exit 1
+          fi
+
+      - name: Checks
+        run: |
+          npm run lint
+          npm run test:run
+
+      # `build` type-checks, then builds dist/ (the code and its types).
+      - name: Build
+        run: npm run build
+
+      - name: Pack
+        run: npm pack
+
+      - name: Attach to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
+        run: gh release upload "$TAG" mei-piano-roll-*.tgz --clobber
