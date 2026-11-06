@@ -46,6 +46,24 @@ MEI file, published for anyone to install (npm) once the repository is public.
 
 **Why.** Other pages need to embed the roll, and a demo makes it easy to try.
 
+### 2026-11-06: installed from a GitHub release until it is on npm
+
+**Choice.** Publishing a GitHub release runs `.github/workflows/release.yml`,
+which checks, builds and packs the library and attaches the package to the
+release as `mei-piano-roll-<version>.tgz`. A page installs it by that file's
+link. The release's tag must match `package.json`'s version (`v0.1.0` for
+0.1.0), or the workflow stops.
+
+**Rejected.** *Publishing to npm now:* it waits on a check of what Verovio's
+license asks of a package that depends on it. *Copying the source into each
+page that uses it:* every copy falls behind the next change, and the first
+one already had (it lacked chord symbols and the bass line).
+
+**Why.** A page can install the real, current package today, with its own
+dependencies (smplr and verovio) installed alongside, and update by pointing
+at a newer release. Moving to npm later changes only the line that names the
+package.
+
 ### 2026-10-07: test files are fetched, never committed
 
 **Choice.** The stress test reads the MEI project's sample encodings
@@ -827,6 +845,23 @@ with ffmpeg, which the maintainer runs locally, and only when the recordings'
 commit changes. The build reads the measured loops from the repository and
 needs nothing new. The loop points are numbers Spool measured, committed with
 the code; the recordings stay out of the history.
+
+### 2026-11-06: a page names the excerpt, and the roll fits its width
+
+**Choice.** A page can pass `title`, which the title line shows in place of
+the file's own title. With no `pxPerBeat`, the roll opens with the whole file
+fitted to its width, within the zoom's range (28 to 160 px per beat); a long
+file opens at the least zoom and scrolls. The title line no longer counts the
+notes: it shows the parts (when there are several), the meter and the bars.
+
+**Rejected.** *Reading the title from the file only:* exports often leave a
+placeholder there (a notation program's default name for a movement). *A
+fixed default zoom:* a short excerpt filled a third of the roll and a long one
+ran off the edge.
+
+**Why.** A page showing excerpts knows what each one is called, and a reader
+takes in a short excerpt best when it is all in view. The note count told a
+reader nothing they could use.
 
 ## Open questions
 

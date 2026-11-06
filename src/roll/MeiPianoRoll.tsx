@@ -42,8 +42,10 @@ export interface MeiPianoRollProps {
   meiText?: string;
   /** Player height in px. Pitch range is fit vertically into this. Default 280. */
   height?: number;
-  /** Initial horizontal zoom in px-per-quarter-beat. Default 64. */
+  /** Initial horizontal zoom in px per quarter-note beat. Default: the whole file fits the width, within the zoom's range. */
   pxPerBeat?: number;
+  /** The title line's name, in place of the file's own title (exports often leave a placeholder there). */
+  title?: string;
   /** Override the tempo from the file, in quarter notes a minute. The player shows it in the meter's beat (dotted in compound meters). */
   bpm?: number;
   /**
@@ -158,6 +160,8 @@ const RULER_H = 22;
 const CHORD_H = 24;
 // Notation zoom, as a multiple of Verovio's own size.
 const NOTATION_ZOOM = { min: 0.4, max: 3, step: 1.25 };
+// The roll's zoom range, in px per quarter-note beat.
+const ROLL_ZOOM = { min: 28, max: 160 };
 
 // ---------------------------------------------------------------------------
 // Component
@@ -512,11 +516,16 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
           setBpm(score.bpm);
           transportRef.current?.setTempo(score.bpm);
         }
+        // With no zoom given, the whole file fits the roll's width, within
+        // the zoom's range; a long file stays at the least zoom and scrolls.
+        if (props.pxPerBeat == null && canvasRef.current && score.totalBeats > 0) {
+          const fit = (canvasRef.current.clientWidth - KEY_W - 8) / score.totalBeats;
+          setZoom(clamp(Math.floor(fit), ROLL_ZOOM.min, ROLL_ZOOM.max));
+        }
         setMeta({
-          title: score.title,
+          title: props.title || score.title,
           byline: byline(score),
           line: [
-            `${score.notes.length} notes`,
             ...(score.parts.length > 1 ? [`${score.parts.length} parts`] : []),
             `${score.meterCount}/${score.meterUnit}`,
             `${score.bars.length} bars`,
@@ -535,7 +544,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
     // props.sound and props.partSounds only set the starting sounds; changing
     // them later doesn't re-read the file.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [src, meiText, props.bpm]);
+  }, [src, meiText, props.bpm, props.title, props.pxPerBeat]);
 
   // Drawing + input + loop live in one mount effect using refs only.
   useEffect(() => {
@@ -920,7 +929,7 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
   // Each view keeps its own zoom: the roll's in pixels a beat, the notation's
   // as a multiple of Verovio's size.
   const zoomBy = (dir: 1 | -1) => {
-    if (view === "roll") setZoom((z) => clamp(Math.round(dir > 0 ? z * 1.25 : z / 1.25), 28, 160));
+    if (view === "roll") setZoom((z) => clamp(Math.round(dir > 0 ? z * 1.25 : z / 1.25), ROLL_ZOOM.min, ROLL_ZOOM.max));
     else setNotationZoom((z) => clamp(dir > 0 ? z * NOTATION_ZOOM.step : z / NOTATION_ZOOM.step, NOTATION_ZOOM.min, NOTATION_ZOOM.max));
   };
 

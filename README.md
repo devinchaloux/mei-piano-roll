@@ -32,7 +32,26 @@ at a smaller size and has its own zoom. Notes are named as the file spells
 them (B♭4, not A#4), and every text color on the roll meets WCAG AA contrast.
 Held sampled notes now sustain past the end of their recordings without a
 click, on loop points Spool measures itself, and the notation view scrolls
-smoothly with the playhead. Nothing is published to npm yet.
+smoothly with the playhead. Nothing is published to npm yet. **2026-11-06:**
+each GitHub release carries the built package, so a page can install it by
+its link (see "Install it in a page").
+
+## Install it in a page
+
+Spool isn't on npm yet. Each [release](https://github.com/devinchaloux/spool/releases)
+carries the built package; install it by its link, choosing the release you want:
+
+```bash
+npm install https://github.com/devinchaloux/spool/releases/download/v0.1.0/mei-piano-roll-0.1.0.tgz
+```
+
+Your page provides React 18 or later. Then:
+
+```tsx
+import { MeiPianoRoll } from 'mei-piano-roll'
+
+<MeiPianoRoll src="/music/excerpt.mei" />
+```
 
 ## Try it
 
