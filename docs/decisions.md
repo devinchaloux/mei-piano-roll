@@ -863,6 +863,21 @@ ran off the edge.
 takes in a short excerpt best when it is all in view. The note count told a
 reader nothing they could use.
 
+### 2026-11-07: a short excerpt fits a phone, and the title wraps
+
+**Choice.** The zoom's floor drops to 12 px per beat, so a four-bar excerpt
+fits a roll on a phone. A file that would need less than 12 to fit still
+opens at 28 and scrolls, as before (`fitZoom` in `src/roll/zoom.ts`). The
+title line wraps onto more lines on a narrow roll instead of cutting the
+title short; the compact player's one-line caption still shortens it.
+
+**Rejected.** *Lowering the floor for every file:* a long file opened at 12
+px per beat is too dense to read at first sight. *Shortening the title:* on a
+phone it cut a long title to a few letters.
+
+**Why.** On a 390 px phone the roll showed two and a half of an excerpt's
+four bars, with a long title cut short.
+
 ## Open questions
 
 | Question | Options |

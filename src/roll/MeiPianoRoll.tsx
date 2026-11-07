@@ -15,6 +15,7 @@ import { withNoteIds } from "../mei/noteIds";
 import { withPrettyChords } from "../mei/chords";
 import { withBassLine, hasBassLine } from "../mei/bassLine";
 import NotationView from "../notation/NotationView";
+import { fitZoom, ROLL_ZOOM } from "./zoom";
 
 /* ===========================================================================
  * MeiPianoRoll — an embeddable MEI piano-roll player.
@@ -160,8 +161,6 @@ const RULER_H = 22;
 const CHORD_H = 24;
 // Notation zoom, as a multiple of Verovio's own size.
 const NOTATION_ZOOM = { min: 0.4, max: 3, step: 1.25 };
-// The roll's zoom range, in px per quarter-note beat.
-const ROLL_ZOOM = { min: 28, max: 160 };
 
 // ---------------------------------------------------------------------------
 // Component
@@ -516,11 +515,10 @@ export default function MeiPianoRoll(props: MeiPianoRollProps) {
           setBpm(score.bpm);
           transportRef.current?.setTempo(score.bpm);
         }
-        // With no zoom given, the whole file fits the roll's width, within
-        // the zoom's range; a long file stays at the least zoom and scrolls.
+        // With no zoom given, the whole file fits the roll's width when it
+        // can; a long file opens at a readable zoom and scrolls (fitZoom).
         if (props.pxPerBeat == null && canvasRef.current && score.totalBeats > 0) {
-          const fit = (canvasRef.current.clientWidth - KEY_W - 8) / score.totalBeats;
-          setZoom(clamp(Math.floor(fit), ROLL_ZOOM.min, ROLL_ZOOM.max));
+          setZoom(fitZoom(canvasRef.current.clientWidth - KEY_W - 8, score.totalBeats));
         }
         setMeta({
           title: props.title || score.title,
@@ -1193,8 +1191,9 @@ const CSS = `
   border: 1px solid var(--mpr-border); border-radius: var(--radius, 10px); overflow: hidden;
 }
 .mpr-full { box-shadow: var(--shadow, 0 10px 40px rgba(0,0,0,.35)); }
-.mpr-header { display: flex; align-items: baseline; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--mpr-border); }
-.mpr-title { font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+/* The header wraps on a narrow roll rather than cutting the title short. */
+.mpr-header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; padding: 12px 16px; border-bottom: 1px solid var(--mpr-border); }
+.mpr-title { font-size: 15px; font-weight: 650; min-width: 0; overflow-wrap: anywhere; }
 .mpr-composer, .mpr-meta { color: var(--mpr-muted); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .mpr-spacer { flex: 1; }
 .mpr-stage { position: relative; }
@@ -1208,7 +1207,7 @@ const CSS = `
 
 .mpr-bar, .mpr-foot { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 10px 14px; border-top: 1px solid var(--mpr-border); }
 .mpr-foot { gap: 12px; padding: 8px 12px; }
-.mpr-foot .mpr-title { font-size: 13px; }
+.mpr-foot .mpr-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mpr-foot .mpr-composer { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 .mpr-icon { appearance: none; width: 34px; height: 34px; display: inline-flex; align-items: center; justify-content: center; border-radius: 8px; border: 1px solid var(--mpr-border); background: transparent; color: var(--mpr-text); cursor: pointer; padding: 0; box-sizing: border-box; text-decoration: none; }
 .mpr-foot .mpr-icon { width: 30px; height: 30px; }
