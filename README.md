@@ -42,7 +42,7 @@ Spool isn't on npm yet. Each [release](https://github.com/devinchaloux/spool/rel
 carries the built package; install it by its link, choosing the release you want:
 
 ```bash
-npm install https://github.com/devinchaloux/spool/releases/download/v0.1.0/mei-piano-roll-0.1.0.tgz
+npm install https://github.com/devinchaloux/spool/releases/download/v0.1.1/mei-piano-roll-0.1.1.tgz
 ```
 
 Your page provides React 18 or later. Then:

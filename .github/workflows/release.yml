@@ -2,7 +2,7 @@ name: Release
 
 # Publishing a GitHub release attaches the built package to it, as
 # mei-piano-roll-<version>.tgz. A page installs that file by its link
-# (`npm install https://github.com/devinchaloux/spool/releases/download/v0.1.0/mei-piano-roll-0.1.0.tgz`)
+# (`npm install https://github.com/devinchaloux/spool/releases/download/v0.1.1/mei-piano-roll-0.1.1.tgz`)
 # until the package is on npm (docs/decisions.md, 2026-11-06).
 on:
   release:
