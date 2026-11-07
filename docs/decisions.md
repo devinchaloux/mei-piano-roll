@@ -878,6 +878,18 @@ phone it cut a long title to a few letters.
 **Why.** On a 390 px phone the roll showed two and a half of an excerpt's
 four bars, with a long title cut short.
 
+### 2026-11-07: the lint tools use a patched minimatch
+
+**Choice.** `package.json` overrides the version of minimatch that ESLint,
+its config loader and typescript-eslint use, to 11.0.5. Nothing else gets it.
+
+**Rejected.** *Waiting for ESLint to take it up:* its newest release (10.14)
+and typescript-eslint's (8.72) still ask for minimatch 10.
+
+**Why.** minimatch 10 has a denial-of-service advisory fixed only in 11.0.1.
+Lint and the tests pass with the override. Remove it once ESLint's own range
+reaches 11.
+
 ## Open questions
 
 | Question | Options |
